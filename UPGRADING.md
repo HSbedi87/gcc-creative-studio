@@ -56,8 +56,15 @@ the migrations run there first. This is the only way to see the real outcome bef
 
 ```bash
 gcloud run revisions list --service=<BACKEND_SERVICE> --region=<REGION> --limit=3
-gcloud run revisions list --service=<FRONTEND_SERVICE> --region=<REGION> --limit=3
 ```
+
+The frontend has no Cloud Run equivalent — confirmed by asking directly: `gcloud run services
+describe <FRONTEND_SERVICE>` returns `Cannot find service`. It deploys to Firebase Hosting, which
+keeps its own release history instead of Cloud Run revisions. Note the current live version there:
+```bash
+firebase hosting:versions:list --site=<FIREBASE_SITE_ID>
+```
+See **Rolling back** for why this distinction matters when you actually need to undo a deploy.
 
 ---
 
@@ -76,17 +83,84 @@ git push origin main
 
 ### Manually
 
+**Finding the values below.** Every placeholder in these commands — service names, the Firebase
+site ID, the frontend URL, and both service accounts — is already sitting on the existing Cloud
+Build triggers, since that's what the automated deploy already runs as. Reading it beats guessing
+or reconstructing it from Terraform:
+```bash
+gcloud builds triggers list --region=<REGION> --format="yaml(name,serviceAccount,substitutions)"
+```
+`<PROJECT_ID>` and `<REGION>` are the project and region you're deploying into; `<INSTANCE>` is
+your Cloud SQL instance name (`gcloud sql instances list` if you don't have it handy).
+
 ```bash
 gcloud builds submit --config backend/cloudbuild.yaml \
-  --substitutions=_REGION=<REGION>,_REPO_NAME=<ARTIFACT_REPO>,_SERVICE_NAME=<BACKEND_SERVICE>
+  --substitutions=_REGION=<REGION>,_REPO_NAME=<ARTIFACT_REPO>,_SERVICE_NAME=<BACKEND_SERVICE>,SHORT_SHA=$(git rev-parse --short HEAD) \
+  --service-account=projects/<PROJECT_ID>/serviceAccounts/<BACKEND_TRIGGER_SA> \
+  .
 
 gcloud builds submit --config frontend/cloudbuild-deploy.yaml \
-  --substitutions=_ANGULAR_BUILD_COMMAND=<build-command>,_BACKEND_SERVICE_ID=<BACKEND_SERVICE>,_BACKEND_URL=<FRONTEND_URL>,_FE_SERVICE_NAME=<FRONTEND_SERVICE>,_FIREBASE_SITE_ID=<FIREBASE_SITE_ID>,_FIREBASE_PROJECT_ID=<FIREBASE_PROJECT>
+  --substitutions=_BACKEND_SERVICE_ID=<BACKEND_SERVICE>,_BACKEND_URL=<FRONTEND_URL>,_FE_SERVICE_NAME=<FRONTEND_SERVICE>,_FIREBASE_SITE_ID=<FIREBASE_SITE_ID> \
+  --service-account=projects/<PROJECT_ID>/serviceAccounts/<FRONTEND_TRIGGER_SA> \
+  .
 ```
+
+`_BACKEND_URL` is the frontend's own Hosting URL, not the backend's — `firebase.json` rewrites `/api/**` on that origin to the Cloud Run backend named by `_BACKEND_SERVICE_ID`, so the Angular app calls same-origin and never hits CORS. It follows the pattern `https://<FIREBASE_SITE_ID>.web.app` unless you've attached a custom domain. Do **not** pass `_ANGULAR_BUILD_COMMAND` or `_FIREBASE_PROJECT_ID`: neither is referenced anywhere in `cloudbuild-deploy.yaml` (the build always runs `npm run build -- --configuration=production`, and the Firebase project comes from the built-in `${PROJECT_ID}`), and a manual submit — unlike a trigger, which tolerates unused ones — rejects the build outright with `key "..." in the substitution data is not matched in the template`. The `--service-account` and staging-bucket caveats above apply here too.
+
+`_FE_SERVICE_NAME`, by contrast, must be present — omit it and you get the mirror-image error,
+`key in the template "_FE_SERVICE_NAME" is not matched in the substitution data`, since it *is*
+referenced (as a step's `env:` entry). But it has no effect on the result: nothing downstream ever
+reads that environment variable. Any non-empty value satisfies it.
 
 Use `cloudbuild-deploy.yaml`, not `frontend/cloudbuild.yaml` — the latter is a thin wrapper the CI trigger uses that only forwards `_FIREBASE_PROJECT_ID` and kicks off the real deploy build `--async`, so it reports success before the actual deploy has even started, and `cloudbuild-deploy.yaml` itself has no default substitutions to fall back on. `cloudbuild-deploy.yaml` is what actually injects secrets, builds Angular, and deploys to Firebase Hosting in one synchronous step — submit it directly for a real manual deploy.
 
 Defaults for the backend's substitutions live at the bottom of `backend/cloudbuild.yaml`.
+
+Two things a plain, undecorated `gcloud builds submit` gets wrong for the backend, both confirmed by actually running it:
+
+- **`SHORT_SHA` is not set.** The image tag in `backend/cloudbuild.yaml` uses `$SHORT_SHA`, which is a Cloud Build *built-in* substitution — populated automatically for a git-triggered build, but empty for a local submit like this one. Without it the build fails at the push step with `invalid image name "...:": could not parse reference`. Pass it explicitly, as above.
+- **The default Cloud Build service account usually cannot deploy.** If the environment's Cloud Run service was locked down the way `infra/modules/cloud-run-service` sets it up — a dedicated per-service `<name>-trig@<project>.iam.gserviceaccount.com` holding `roles/run.developer` on that one service, which the Cloud Build *trigger* runs as — a manual submit with no `--service-account` falls back to the project's default Compute Engine service account, which typically only has `roles/run.invoker`. The deploy step then fails with `PERMISSION_DENIED` on `run.services.get`. You can confirm which identity holds `run.developer` on the backend with:
+  ```bash
+  gcloud run services get-iam-policy <BACKEND_SERVICE> --region=<REGION> \
+    --format="value(bindings)" | grep run.developer
+  ```
+  but that check only works for the backend — the frontend has no Cloud Run service to hold an IAM
+  policy at all (see **Note the current revisions**), so `gcloud run services get-iam-policy
+  <FRONTEND_SERVICE>` returns nothing useful for it even though it also needs a `--service-account`.
+  The method that works for both, because it's exactly what the automated deploy already uses, is
+  reading it off the trigger itself — see **Finding the values below**. Pass whichever identity you
+  find via `--service-account`, as above. This borrows the CI/CD identity for a manual run — that is
+  deliberate, not a workaround to route around, since it is the identity actually provisioned to
+  deploy this service. If that service account has not been granted read access to Cloud Build's
+  default staging bucket (`gs://<PROJECT_ID>_cloudbuild`), the submit will instead fail with
+  `storage.objects.get` denied on the uploaded source tarball; grant it once with:
+  ```bash
+  gcloud storage buckets add-iam-policy-binding gs://<PROJECT_ID>_cloudbuild \
+    --member=serviceAccount:<BACKEND_TRIGGER_SA> --role=roles/storage.objectViewer
+  ```
+  Repeat for the frontend's trigger service account if `cloudbuild-deploy.yaml` hits the same two errors.
+
+**Check what you're about to upload before you submit.** A manual submit tarballs your entire
+working directory (`.`), filtered only by `.gcloudignore`. Run `du -sh .` first — this repo's real
+source is under 200 MB, so anything close to a gigabyte means something unexpected is being swept
+up. `.gcloudignore` excludes build output it knows about (`node_modules`, `dist`, `.venv`, `.git`)
+but, confirmed by actually measuring one such upload, it currently misses:
+
+- **`.terraform/`** — Terraform's downloaded provider binaries under `infra/environments/*/`, ~270
+  MB per `terraform init` you've run. Not in `.gcloudignore` at all.
+- **`_review/`** and **`screenshots/`** — gitignored, but gitignore and gcloudignore are separate
+  files and only the latter governs what a build submit uploads. If you keep generated review
+  material or screenshots at the repo root, this is where it goes: 236 MB and 69 MB respectively
+  in the run that caught this.
+- **Any other untracked directory `.gcloudignore` was never told about** — a stray nested clone of
+  this same repo (left over from a `git clone` run inside itself) is what triggered this
+  investigation, contributing roughly 1.5 GB on its own: a full `.venv` and `.terraform` cache per
+  nesting level, plus `backend/bootstrap/assets` (demo seed media, ~85 MB) and a stray
+  `cloud-sql-proxy` binary.
+
+The first two are permanent gaps in `.gcloudignore` — add `**/.terraform/`, `_review/`, and
+`screenshots/` to it so they stop riding along for everyone, not just this checkout. The third is
+checkout-specific junk with no config fix; find it with `du -sh */` and delete or move it out.
 
 ### Deploy both services
 
@@ -96,6 +170,23 @@ particular can leave the old UI offering options the API now rejects.
 Your `frontend/src/environments/environment.prod.ts` is gitignored, so your Firebase and backend
 configuration survives the upgrade — but the frontend must still be rebuilt for client-side
 changes to take effect.
+
+### A manual deploy and an active trigger can fight each other
+
+If you deploy manually — to get an unmerged fix out sooner than a PR review allows, for
+example — your Cloud Build trigger is still watching its normal source. Cloud Run gives 100% of
+traffic to whichever revision was deployed most recently, so the next automatic deploy silently
+overwrites your manual one with whatever the tracked source currently contains.
+
+This matters most if you are running from a fork while a fix sits in an unmerged upstream PR:
+syncing that fork with upstream and pushing is the normal way to pick up changes, and doing so
+before the PR merges pulls in upstream `main` **without** the fix, then deploys it over your
+manual one the moment someone pushes.
+
+If a manual deploy needs to outlive a normal deploy cycle, either disable the trigger for the
+duration (`gcloud builds triggers update <name> --disabled`, both backend and frontend), or make
+sure whoever can push to the tracked branch knows not to sync with upstream until the real fix
+has landed there.
 
 ---
 
@@ -117,12 +208,24 @@ changes to take effect.
 
 ## Rolling back
 
-Code rollback is immediate:
+**Backend** rollback is immediate — tested live, including confirming traffic actually moved:
 
 ```bash
-gcloud run services update-traffic <SERVICE> --region=<REGION> \
+gcloud run services update-traffic <BACKEND_SERVICE> --region=<REGION> \
   --to-revisions=<PREVIOUS_REVISION>=100
 ```
+
+**Frontend** does not use this command — it isn't a Cloud Run service (see **Note the current
+revisions**), and Firebase Hosting has no equivalent one-line CLI rollback as of this writing. The
+supported paths are:
+- **Console**: Hosting → Release history → the previous release's ⋮ menu → Roll back. This is
+  Firebase's own recommended method.
+- **CLI**, if you'd rather script it: `firebase hosting:versions:clone` the prior version into a
+  new one, then `firebase deploy --only hosting` to make it live. Cloning alone does not go live.
+
+Not verified live in this pass — the version-clone path needs `firebase-tools` installed and
+Firebase-level permissions this session's identity didn't have on the test project. Confirm it
+once in a rehearsal before relying on it during a real incident.
 
 If migrations ran and you need to undo them, restore the backup taken in step 2. Do not rely on
 `alembic downgrade` for anything destructive.
