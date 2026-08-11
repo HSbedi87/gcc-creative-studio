@@ -392,8 +392,8 @@ them overturn what this document previously assumed.
 | `upscale_portrait` | SUCCESS, 314s -> **2160x3840** | **Genuine vertical 4K**, not a rotated or padded landscape frame. |
 | `omni_cine` | SUCCESS, 193s | The output really is a directory: 192 PNG frames, a separate WAV, an MP4 preview. |
 | `omni_cine_portrait` | **REJECTED in 10s** | `Input video must be exactly 1280x720, but got 720x1280`. |
-| `video_transform` | RAI filtered, 133s | `Recitation check failed` - see below. |
-| `video_transform_masked` | RAI filtered, 193s | Same. |
+| `video_transform` | **SUCCESS, 194s** on real footage | The capability works; the earlier filter was the fixture - see below. |
+| `video_transform_masked` | RAI filtered, 193s | `Recitation check failed` on the same fixture, not yet retried. |
 
 **Vertical 4K is real, so the Phase 1 pipeline works end to end.** Generate 9:16 at 720p with Omni,
 upscale to 2160x3840. The whole vertical case rested on that assumption and it now has a measured
@@ -411,13 +411,20 @@ and needs its own probe.
 returned a WAV beside the preview. Ingesting only the preview, for a capability whose output carries
 a separate audio track, yields a 4K master that plays silent.
 
-**The RAI filtering is very likely our fixture rather than the capability.** Both transform variants
-filtered on `Recitation check failed` while every other case using the same generated media passed.
-Video transform is a structure-preserving restyle and the fixture is an ffmpeg `testsrc` card -
-canonical colour bars plus a seven-segment counter. Asked to restyle that while holding structure,
-the output is a near-verbatim reproduction of one of the most reproduced images there is, which is
-what a recitation check exists to catch. Retry with real footage before concluding anything about
-the payload; if real footage filters too, that is a genuine finding worth taking to the programme.
+**The RAI filtering was our fixture, not the capability - retried and confirmed.** Both transform
+variants first filtered on `Recitation check failed` while every other case using the same generated
+media passed. The hypothesis was that video transform is a structure-preserving restyle and the
+fixture was an ffmpeg `testsrc` card - canonical colour bars plus a seven-segment counter. Asked to
+restyle that while holding structure, the output is a near-verbatim reproduction of one of the most
+reproduced images there is, which is what a recitation check exists to catch.
+
+Re-running `video_transform` against a real 720p clip returned **SUCCESS in 193.9s with
+`raiMediaFilteredCount: 0`**. So the capability is viable and the capability matrix changes: video
+transform moves from "blocked by RAI" to "works, subject to the usual content policy". Two things
+follow. **The smoke fixture is misleading for any structure-preserving capability** and should use
+real footage rather than a test card. And **`video_transform_masked` has not been retried** - it
+filtered on the same card, so the same explanation almost certainly covers it, but that is an
+inference and it is written here as one.
 
 **Timing sets a floor for the UX.** Roughly 315s for a 4K upscale, 193s for Omni-Cine. Phase 1
 cannot be a dialog with a spinner; it needs a real background job with progress, which in turn needs
@@ -505,3 +512,50 @@ Note the codebase already handles this exact shape for audio: `_check_audio` war
 as accepted while no AAC mime type is listed as declarable. Video gets no equivalent warning. If the
 VPE team confirms the upscaler page is stale, that asymmetry is fine; if they confirm `video/mp4` is
 genuinely the only accepted value, the registry is wrong and preflight should block.
+
+## 6g. The Phase 1 scope question, and the experiment that settles it
+
+The upscaler accepts **4 to 8 seconds**. Of the customer's 16 measured shots, **4 fit**. A plain
+"Upscale to 4K" button would therefore be greyed out on 12 of 16 assets, which is not a feature
+anyone would call shipped.
+
+There are two ways out and only one of them is useful:
+
+- **Segment selection** — let the user pick an 8 second window of a 10 second shot. Trivial to
+  build, and it hands the customer 8 seconds of a shot they need 10 seconds of. Useless for
+  delivery.
+- **Split and rejoin** — cut 240 frames into 2x120, upscale each as its own job, concatenate. This
+  is what they actually need, and it has one real risk: the two halves are **independent jobs**, and
+  nothing documented promises deterministic grain, sharpening or face texture between two of them.
+  If they do not match, the join is a visible pop and split-and-rejoin is not shippable.
+
+That risk is measurable, so it is being measured rather than argued about.
+
+**`backend/scripts/vpe_seam_check.py`** cuts a source into balanced upscalable segments, upscales
+each through `build_payload` and `VpeClient` — the shipped path, not a bespoke one — concatenates by
+stream copy so no re-encode can mask or invent a seam, and then measures the join. The measurement
+is a ratio, not an absolute: `tblend=all_mode=difference,signalstats` gives a per-transition average
+luma delta, frames inside a segment establish what a normal step looks like for this footage, and
+the step across the seam is read against that distribution. Under 1.5x the p95 is invisible; over 4x
+is a pop.
+
+The detector was validated against synthetic joins before being trusted with a paid job — a
+deliberately mismatched pair (brightness +0.10) reads **VISIBLE at 9.08x p95**, a mild 0.02 shift
+reads **INVISIBLE at 1.05x**, and two identical halves read **INVISIBLE at 0.72x**. Worth recording
+why: the first version of `_analyse` reported an identical clean verdict for the mismatched pair and
+the control, which is what exposed the bug. `tblend` emits one value per *transition*, so a 240
+frame clip yields 239 deltas and the seam at frame 120 sits at index **119**. Reading index 120 read
+an ordinary step inside the second segment, and would have returned "no visible seam" for any
+footage whatsoever — a green result that meant nothing, on the strength of which Phase 1's scope
+would have been decided.
+
+    python -m scripts.vpe_seam_check --project P --bucket gs://B \
+        --source shot.mp4 --out seam_report
+
+Two upscale jobs, roughly 5 minutes in parallel. `--dry-run` exercises the split and the analysis
+wiring without calling VPE and needs no allowlist. Exit code is 0 only on INVISIBLE.
+
+**What the answer decides.** INVISIBLE and Phase 1 covers all 16 shots with a split-and-rejoin path
+behind the same button. VISIBLE and the honest answer to the customer is that the upscaler is for
+4-8 second shots, Phase 1 covers 4 of 16, and the gap goes to the VPE programme as a product
+request rather than being papered over in the UI.
