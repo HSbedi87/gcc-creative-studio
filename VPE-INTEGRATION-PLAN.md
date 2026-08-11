@@ -440,3 +440,68 @@ the intermediate phase writes described in §6b.
    probably should not go to `GoogleCloudPlatform/gcc-creative-studio` in the open until the
    program says so — which argues for keeping it on a branch in the fork, feature-flagged, until
    authorised.
+
+## 6f. Doc review of `preflight.py` and `client.py`
+
+These two modules were the only ones never checked line-by-line against the documentation. The
+earlier review pass had a reviewer-matching bug that handed all three reviewers the same
+`payloads.py` report, so 2,700 lines went unread. This closes that gap. Both findings below were
+reproduced by running the code, not inferred from reading it.
+
+### `client.py` — no defects found
+
+Checked against the user guide's API contract: the shared publisher endpoint, `predictLongRunning`
+/ `fetchPredictOperation`, the required `X-Vertex-AI-LLM-Request-Type: shared` header, the
+`done: true` + `error` envelope, and the eight documented failure bodies. All present and correct.
+
+Two things worth recording as verified rather than assumed:
+
+* Every documented error is represented in `errors.py`, and the classifier matches on message text
+  before status code — correct, because duration, frame rate, aspect ratio and frame size
+  rejections all arrive as a bare `code: 3` and only the text distinguishes them.
+* The 1800s default timeout clears the slowest observed live job (315s) by a wide margin.
+
+One judgement call is undocumented and should be: a `done: true` failure raises out of the polling
+loop rather than being retried, including `VpeServiceOverloadedError`, which is marked `retryable`.
+That is right — a finished-and-failed operation cannot be re-polled into success, so retrying means
+submitting a new job — but nothing says so, and `retryable` on an error the poller never retries
+invites the opposite reading.
+
+### `preflight.py` — one real gap
+
+**A still sent to omni-cine is under-checked.** `validate` infers the slot from the file's kind,
+and justifies it in its own docstring by claiming the still slots of a capability share one set of
+constraints. That is false for omni-cine, which takes stills in two roles: reference images, at
+**any resolution**, and frames of a PNG or EXR input sequence, which the input table requires to be
+**1280x720**. Both probe as `IMAGE` and both are checked against the reference-image constraints.
+
+Confirmed by running it — a 3000x2000 PNG returns zero findings against `omni_cine`:
+
+```
+--- offspec_frame.png vs omni_cine: blocking=0
+      (no findings at all)
+```
+
+The byte cap is 30 MiB in both roles, so only resolution goes unchecked. The fix is to let a caller
+say which slot it means instead of guessing from the file; that changes `validate`'s signature, so
+it belongs with the omni-cine work rather than as a drive-by. The docstring no longer claims
+otherwise. **No impact on Phase 1**, which is the upscaler and sends no reference images.
+
+### Not a code defect: the upscaler's mime type list contradicts itself
+
+The Upscaler page states the input may be *"ProRes, DNxHR, H264 (video/mp4), or PNG frames"*, then
+states of the `mimeType` field: *"The following mime type is accepted: video/mp4."* Those cannot
+both be true — a ProRes `.mov` has no legal value to declare. The registry accepts
+`video/quicktime` and `application/mxf` as well, and a ProRes file passes preflight clean.
+
+The registry is probably right: the Professional formats page says the pipeline detects the format
+*"based on the input container metadata or the specified mimeType"* and lists ProRes and DNxHR as
+accepted upscaler input, which reads as the more specific and more current statement. Left as is
+deliberately — warning on every ProRes job on the strength of one abbreviated sentence would be
+noise. **Worth raising with the VPE team**, along with the same page's `resolution` parameter, whose
+documented default `720p` is not among its own accepted values (`1080p`, `4k`).
+
+Note the codebase already handles this exact shape for audio: `_check_audio` warns that AAC is named
+as accepted while no AAC mime type is listed as declarable. Video gets no equivalent warning. If the
+VPE team confirms the upscaler page is stale, that asymmetry is fine; if they confirm `video/mp4` is
+genuinely the only accepted value, the registry is wrong and preflight should block.
