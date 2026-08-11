@@ -513,7 +513,7 @@ as accepted while no AAC mime type is listed as declarable. Video gets no equiva
 VPE team confirms the upscaler page is stale, that asymmetry is fine; if they confirm `video/mp4` is
 genuinely the only accepted value, the registry is wrong and preflight should block.
 
-## 6g. The Phase 1 scope question, and the experiment that settles it
+## 6g. The Phase 1 scope question — settled: split-and-rejoin works
 
 The upscaler accepts **4 to 8 seconds**. Of the customer's 16 measured shots, **4 fit**. A plain
 "Upscale to 4K" button would therefore be greyed out on 12 of 16 assets, which is not a feature
@@ -559,3 +559,57 @@ wiring without calling VPE and needs no allowlist. Exit code is 0 only on INVISI
 behind the same button. VISIBLE and the honest answer to the customer is that the upscaler is for
 4-8 second shots, Phase 1 covers 4 of 16, and the gap goes to the VPE programme as a product
 request rather than being papered over in the UI.
+
+### The answer: INVISIBLE, at 0.34x the p95
+
+Run against a real 10 second 16:9 shot, split into two 120 frame halves and upscaled as two
+independent jobs. Results are checked in under `backend/seam_report/`.
+
+| Measure | Value |
+|---|---|
+| Verdict | **INVISIBLE** |
+| Seam delta at frame 120 | 7.4825 |
+| Baseline median | 8.122 |
+| Baseline p95 | 21.7286 (238 transitions) |
+| Seam as a multiple of p95 | **0.34x** |
+
+The number to notice is not the ratio but the comparison with the median: **the step across the join
+is smaller than a typical frame-to-frame step in this footage.** The seam is not merely inside the
+normal spread, it is below the middle of it. There is nothing marginal about this result.
+
+Confirmed visually as well as numerically, because the two are not the same claim. The detector
+measures average luma difference, which is sensitive to an exposure or brightness pop and much less
+sensitive to a change in grain or sharpening that leaves average brightness alone. Inspecting the
+two 3840x2160 frames either side of the join at native resolution — a static horizon and water
+region, where a texture mismatch would be obvious and motion would not disguise it — the detail
+level, edge sharpness and noise character are consistent across the join. Motion advances; the
+rendering does not change.
+
+**So Phase 1 covers all 16 shots, not 4.** The upscale button splits anything over 8 seconds,
+upscales the pieces and rejoins them, and the customer gets a full-length 4K master rather than a
+truncated one. The output was also confirmed as genuine 3840x2160.
+
+**What this does not establish.** One shot, one split point, 16:9. It does not prove the same for
+9:16 (the orientation this customer's slate probably needs), for a shot long enough to need three or
+more segments and therefore two or more seams, or for footage whose baseline variation is much lower
+than this one's — a locked-off dialogue two-shot has far less frame-to-frame motion, so the same
+absolute mismatch would read as a much larger multiple of a much smaller p95. **A near-static shot is
+the adversarial case and it has not been run.** The script exists and is cheap to re-run, so this is
+a gap to close rather than a risk to carry silently.
+
+### Consequence: the job count doubles, and the executor cannot take it
+
+Splitting means **two VPE jobs per shot**, so the customer's 16 shots become **32 jobs of ~315s
+each**. That runs headlong into `main.py`, which creates a single `ThreadPoolExecutor(max_workers=4)`
+shared by every background job in the application, and into the existing long-job pattern in
+`veo_service.py`, which polls `while not operation.done` and therefore **pins one of those four
+threads for the entire job**.
+
+Four upscales is enough to consume the app's whole background capacity. Thirty-two of them is
+roughly **42 minutes during which no Veo generation, no concatenation and no workflow can start.**
+This is a pre-existing ceiling rather than something Phase 1 introduces, but Phase 1 is the first
+feature that gives a user an obvious reason to queue sixteen five-minute jobs at once.
+
+**Minimum fix for Phase 1: a separate executor for VPE.** A second pool of 2-3 workers, so VPE
+saturation degrades VPE and leaves the rest of the app responsive. The correct fix is a durable job
+queue with resumable polling, which is real work and does not belong in Phase 1.
