@@ -381,10 +381,54 @@ and fail closed.
 - **`ImageCropperDialogComponent` already exists** with 16:9 / 9:16 presets and already fires on
   every image upload. It is the crop-don't-pad answer to the pillarbox trap, and no proposal cited it.
 
+## 6e. Live results - measured, not inferred
+
+First run against an allowlisted project. Each line below replaces a guess with a fact, and two of
+them overturn what this document previously assumed.
+
+| Case | Result | What it settles |
+|---|---|---|
+| `upscale` | SUCCESS, 315s -> **3840x2160** | The Phase 1 capability works. |
+| `upscale_portrait` | SUCCESS, 314s -> **2160x3840** | **Genuine vertical 4K**, not a rotated or padded landscape frame. |
+| `omni_cine` | SUCCESS, 193s | The output really is a directory: 192 PNG frames, a separate WAV, an MP4 preview. |
+| `omni_cine_portrait` | **REJECTED in 10s** | `Input video must be exactly 1280x720, but got 720x1280`. |
+| `video_transform` | RAI filtered, 133s | `Recitation check failed` - see below. |
+| `video_transform_masked` | RAI filtered, 193s | Same. |
+
+**Vertical 4K is real, so the Phase 1 pipeline works end to end.** Generate 9:16 at 720p with Omni,
+upscale to 2160x3840. The whole vertical case rested on that assumption and it now has a measured
+answer rather than a documented one.
+
+**Omni-Cine is landscape only, and the service says so itself.** §3.1 filed it as tier three,
+"unstated", and warned the failure would be silent pillarboxing on a paid job. It is not: the
+request is rejected outright in ten seconds, naming the exact expected dimensions. That is the good
+failure mode, and preflight can now state the rule rather than hedge. This does **not** settle the
+same question for dialogue-driven or video textures - those take a still rather than a video and are
+documented as "resized and padded internally", so the silent-pillarbox hazard may still apply there
+and needs its own probe.
+
+**The audio stem is real, so the silent-master risk in §6b is not theoretical.** `omni_cine`
+returned a WAV beside the preview. Ingesting only the preview, for a capability whose output carries
+a separate audio track, yields a 4K master that plays silent.
+
+**The RAI filtering is very likely our fixture rather than the capability.** Both transform variants
+filtered on `Recitation check failed` while every other case using the same generated media passed.
+Video transform is a structure-preserving restyle and the fixture is an ffmpeg `testsrc` card -
+canonical colour bars plus a seven-segment counter. Asked to restyle that while holding structure,
+the output is a near-verbatim reproduction of one of the most reproduced images there is, which is
+what a recitation check exists to catch. Retry with real footage before concluding anything about
+the payload; if real footage filters too, that is a genuine finding worth taking to the programme.
+
+**Timing sets a floor for the UX.** Roughly 315s for a 4K upscale, 193s for Omni-Cine. Phase 1
+cannot be a dialog with a spinner; it needs a real background job with progress, which in turn needs
+the intermediate phase writes described in §6b.
+
 ## 7. Open questions to resolve before Phase 1 code
 
-1. **Orientation (§3.1).** Is TU's VPE interest vertical or landscape? This determines whether
-   Phases 2–4 are worth building at all in their current form.
+1. ~~**Orientation (§3.1).**~~ **Answered for the two that matter.** The upscaler produces genuine
+   2160x3840 vertical; Omni-Cine rejects portrait outright. Still open for dialogue-driven and video
+   textures, which take stills and may pad silently. What remains is the commercial question: is
+   TU's slate vertical or landscape, and therefore is anything past Phase 1 worth building?
 2. **Allowlisted project vs. deployment project.** VPE requires input and output buckets in the
    allowlisted project. Is the intended allowlisted project the same one Creative Studio is
    deployed into? If not, the app needs a separate VPE bucket and a copy step.
