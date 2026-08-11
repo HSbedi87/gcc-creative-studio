@@ -589,13 +589,31 @@ rendering does not change.
 upscales the pieces and rejoins them, and the customer gets a full-length 4K master rather than a
 truncated one. The output was also confirmed as genuine 3840x2160.
 
-**What this does not establish.** One shot, one split point, 16:9. It does not prove the same for
-9:16 (the orientation this customer's slate probably needs), for a shot long enough to need three or
-more segments and therefore two or more seams, or for footage whose baseline variation is much lower
-than this one's — a locked-off dialogue two-shot has far less frame-to-frame motion, so the same
-absolute mismatch would read as a much larger multiple of a much smaller p95. **A near-static shot is
-the adversarial case and it has not been run.** The script exists and is cheap to re-run, so this is
-a gap to close rather than a risk to carry silently.
+### The 9:16 case, confirmed the same way
+
+Run again against a real 10 second **9:16** shot (720x1280 to 2160x3840), split into two 120 frame
+halves and upscaled as two independent jobs, same as the 16:9 run above.
+
+| Measure | Value |
+|---|---|
+| Verdict | **INVISIBLE** |
+| Seam delta at frame 120 | 12.4561 |
+| Baseline median | 12.011 |
+| Baseline p95 | 19.9789 (238 transitions) |
+| Seam as a multiple of p95 | **0.62x** |
+
+Output confirmed as genuine 2160x3840 at exactly 240 frames, 24 fps. This is the orientation this
+customer's slate actually needs, so split-and-rejoin is no longer only proven for 16:9 — the
+vertical case now has the same measured answer.
+
+**What still has not been established.** A shot long enough to need three or more segments and
+therefore two or more seams, and footage whose baseline variation is much lower than either run
+above — a locked-off dialogue two-shot has far less frame-to-frame motion, so the same absolute
+mismatch would read as a much larger multiple of a much smaller p95. **A near-static shot is the
+adversarial case and it has not been run**: a repeat attempt measured the same source clip as the
+original 16:9 run above rather than genuinely low-motion footage, so this gap is still open. The
+script exists and is cheap to re-run against the right source, so this is a gap to close rather than
+a risk to carry silently.
 
 ### Consequence: the job count doubles, and the executor cannot take it
 
