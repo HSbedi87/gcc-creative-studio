@@ -631,3 +631,57 @@ feature that gives a user an obvious reason to queue sixteen five-minute jobs at
 **Minimum fix for Phase 1: a separate executor for VPE.** A second pool of 2-3 workers, so VPE
 saturation degrades VPE and leaves the rest of the app responsive. The correct fix is a durable job
 queue with resumable polling, which is real work and does not belong in Phase 1.
+
+## 6h. Phase 1 run end to end, through the app - measured
+
+§6e ran the capabilities directly against the API. This ran **the feature**: a gallery row, through
+`VpeService.start_upscale_job`, the screening gate, the split, both segments, the rejoin, the audio
+restore and the write-back. Everything up to this point was either a direct API call or an argument
+about code. This is the first evidence that the pipeline the app actually contains works.
+
+| | |
+|---|---|
+| Source | 720x1280, 24 fps, 240 frames, AAC - a real 10s vertical shot |
+| Plan | 2 segments of 120 frames, submitted 1.6s apart |
+| Wall clock | **5m31s** |
+| Row | `status=completed`, `error_message=None` |
+| Master | **2160x3840**, 24 fps, 240 frames, AAC 10.005s |
+
+**Concurrency is real, not designed-for.** Two segments at ~315s each ran in 5m31s. Sequential would
+have been ~10.5 minutes. The submit-all-then-wait ordering in the worker does what §6g claimed it
+would.
+
+**Nothing was lost in the round trip.** 240 frames in, 240 frames out; the audio is the original
+track at its original length. The frame count surviving the split, the upscale and the rejoin is the
+thing the whole split-and-rejoin argument rests on, and it is now measured rather than reasoned.
+
+**The seam gap in §6g is still open.** This clip is the same class of footage as the runs above -
+ordinary motion, not the locked-off two-shot that is the adversarial case. The run confirms the
+mechanics, not the invisibility of the seam on near-static footage.
+
+### What auditing the path before this run turned up
+
+Three defects, all found before spending anything, all fixed and covered by tests:
+
+- **`probe_media` read the coded frame size and ignored the display matrix.** ffmpeg autorotates on
+  decode, so a phone clip coded 1920x1080 with a quarter turn is cut, uploaded and billed as
+  1080x1920. The old measurement validated a geometry that was never sent and declared an aspect
+  ratio the delivered pixels contradict - which the upscaler rejects outright.
+- **`cut_segment` trusted ffmpeg's exit code.** ffmpeg exits zero having written whatever it could.
+  The planner divides up the container's declared length while `select` keeps the frames the file
+  presents, and an mp4 edit list makes those disagree - a 240 frame container holding 216 plans as
+  two halves and delivers a second half of 96, under the API minimum, after the first has been paid
+  for. It now counts what it wrote, and every cut happens before the first upload.
+- **`check_upscalable` refused any source that was not H.264 in MP4.** Every segment is re-encoded
+  on the way out, so the API never sees the source codec; a ProRes master was turned into an error
+  by a rule that did not apply to it.
+
+The first two are only reachable with a source this run did not have - a turned phone clip, a
+trimmed master. Neither would have been caught by running the happy path again, which is the
+argument for auditing the path rather than only widening the test corpus.
+
+### Still blocking a real deployment
+
+The run used a local backend against an allowlisted project. The deployed backend runs as a
+different service account in `nflx-media-analysis`, and **whether that identity is allowlisted on
+the VPE project is unverified**. That is the deployment blocker, not anything in this pipeline.
