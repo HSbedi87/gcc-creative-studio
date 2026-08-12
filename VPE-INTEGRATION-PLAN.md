@@ -655,9 +655,8 @@ would.
 track at its original length. The frame count surviving the split, the upscale and the rejoin is the
 thing the whole split-and-rejoin argument rests on, and it is now measured rather than reasoned.
 
-**The seam gap in §6g is still open.** This clip is the same class of footage as the runs above -
-ordinary motion, not the locked-off two-shot that is the adversarial case. The run confirms the
-mechanics, not the invisibility of the seam on near-static footage.
+**This clip turned out to be the adversarial case §6g was asking for**, which was not the intent
+when it was seeded - see §6i.
 
 ### What auditing the path before this run turned up
 
@@ -685,3 +684,73 @@ argument for auditing the path rather than only widening the test corpus.
 The run used a local backend against an allowlisted project. The deployed backend runs as a
 different service account in `nflx-media-analysis`, and **whether that identity is allowlisted on
 the VPE project is unverified**. That is the deployment blocker, not anything in this pipeline.
+
+## 6i. The low-motion seam gap - closed, and the seam is real
+
+§6g left one thing open: every seam run so far had been on ordinary-motion footage, and the
+prediction was that quiet footage would read much worse because the same absolute mismatch is a
+larger multiple of a smaller p95. The clip seeded for the live run in §6h turned out to *be* that
+case - a seated figure dabbing his face, whose frame-to-frame variation is about **twelve times
+lower** than either earlier run.
+
+| Run | Baseline p95 | Seam delta | x p95 | Verdict |
+|---|---|---|---|---|
+| 16:9 standalone | 21.73 | 7.48 | 0.34x | INVISIBLE |
+| 9:16 standalone | 19.98 | 12.46 | 0.62x | INVISIBLE |
+| **9:16, live app pipeline** | **1.72** | **2.05** | **1.19x** | **INVISIBLE** |
+
+Still inside the threshold, and the two frames either side of the join are continuous to the eye -
+same pose, lighting and exposure, no pop. But the headroom is much thinner than the earlier runs
+implied, and one number says it better than the verdict does: **the seam is the second largest
+frame-to-frame step in the whole clip**, out of 239. Only 0.4% of transitions exceed it.
+
+### The source control: the seam is caused by the split, not by the footage
+
+The baseline above is measured on the upscaled clip, so on its own it cannot separate *"the upscale
+introduced a discontinuity at the join"* from *"the cut happened to land on the busiest moment in the
+shot"*. Measuring the 720x1280 original the same way settles it. Frame 120 is an arbitrary midpoint,
+and in the source it looks like one:
+
+| | Source 720x1280 | Master 2160x3840 |
+|---|---|---|
+| Step at the cut (t119) | 1.086 | 2.049 |
+| Rank among 239 transitions | **68th** | **2nd** |
+| Share of transitions exceeding it | 28% | 0.4% |
+
+Normalising each transition to its own clip's median and asking what the upscale did to it makes the
+mechanism explicit. **Ordinary transitions are left alone** - median factor 0.985, p95 1.313, and
+most are nudged slightly *down*, which is what an upscale's smoothing should do. **The join is
+amplified 1.62x**, the 3rd largest amplification of any transition and 1.64x what a typical
+transition receives. Its immediate neighbours are untouched (t114 0.88 -> 0.80, t118 1.15 -> 1.04,
+t120 1.54 -> 1.56).
+
+So the seam is real, it is attributable to the two segments being independent jobs, and it is now
+measured rather than inferred. It is simply small.
+
+### Two things this rules out
+
+**A sustained texture mismatch between halves.** Independently upscaled segments could differ in
+grain or sharpness for their whole length, which would be far more visible than a single-frame pop
+and which the seam metric - reading exactly one transition - would miss completely. It is not
+happening: segment 1's mean step is 0.79x segment 0's, and per-block means oscillate with the action
+(0.72, 1.54, 0.86, 1.37, 0.67) with no step at the join.
+
+**A worse cut point on this footage.** Had the join landed on the busiest transition in the source
+(t47) and been amplified the same 1.62x, the resulting step would be roughly 2.16x p95 - the
+MARGINAL band, still well under the 4.0x that reads as VISIBLE. On this clip no choice of cut point
+produces a visible seam.
+
+### What is still open, and one idea worth costing
+
+A shot needing **three or more segments**, and therefore two or more seams, is still unrun. So is
+footage quieter than this one - a locked-off tripod shot with no character movement at all. The
+amplification factor is a single measurement from a single clip, so it should not be extrapolated
+far: what is established is the mechanism and its size here, not a law.
+
+The mechanism does suggest a cheap improvement. `plan_segments` balances the halves, which puts the
+join at the midpoint for reasons that have nothing to do with the picture. The constraint is only
+that each segment stays within 96-192 frames, so for a 240 frame clip the cut may fall anywhere from
+96 to 144 - a 48 frame window. **Choosing the quietest transition in that window would put the join
+where a 1.6x amplification is least visible**, at no extra cost in jobs or time. That is a real
+option this data opens up rather than something to build now, and it belongs in the same discussion
+as the three-segment case.
