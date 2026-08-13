@@ -268,10 +268,12 @@ wrong.
   sharpness, codec/quality). Deliberately not a new generation mode.
 
 **Infra / docs**
-- `bootstrap.sh` + Terraform: create/verify the three service agents, including the
+- ~~`bootstrap.sh` + Terraform~~ → done as `scripts/vpe_bootstrap_project.sh` (`§8a`), kept
+  separate from `bootstrap.sh` because the allowlisted project is usually not the deployment
+  project: create/verify the three service agents, including the
   start-and-cancel dance for `vertex-bp` and `vertex-tune`, and grant `roles/storage.admin`.
-- `UPGRADING.md`: a VPE section covering allowlisting prerequisites, the service-agent bootstrap,
-  and the fact that the feature ships off by default.
+- ~~`UPGRADING.md`~~ → done (`§8a`): a VPE section covering allowlisting prerequisites, the
+  service-agent bootstrap, and the fact that the feature ships off by default.
 
 ---
 
@@ -754,3 +756,198 @@ that each segment stays within 96-192 frames, so for a 240 frame clip the cut ma
 where a 1.6x amplification is least visible**, at no extra cost in jobs or time. That is a real
 option this data opens up rather than something to build now, and it belongs in the same discussion
 as the three-segment case.
+
+## 6j. Phase 1 frontend tests - the last untested surface
+
+Every audit so far had been on the backend, where the VPE modules carry ~1000 tests. The frontend
+VPE surface had **none**: no spec existed for the service, the dialog, or the gallery entry point.
+That is the whole of the code a user actually touches.
+
+Closed with 41 specs across three files:
+
+| File | Tests | |
+|---|---|---|
+| `frontend/src/app/services/vpe/vpe.service.spec.ts` | 19 | new |
+| `frontend/src/app/common/components/vpe-upscale-dialog/vpe-upscale-dialog.component.spec.ts` | 12 | new |
+| `frontend/src/app/gallery/media-detail/media-detail.component.spec.ts` | 10 | rewritten |
+
+Suite went 97 passing / 21 failing to **138 passing / 20 failing**; `gts lint` stays at 0 errors and
+the warning count is unchanged, so the new files add none. The 20 remaining failures are all
+pre-existing and none are VPE - stale `ng generate` scaffolds missing `HttpClient`, `MatDialogRef`
+or `ActivatedRoute` providers, two Material `NG0304` template errors, and three `HomeComponent`
+assertion drifts. `media-detail` was the 21st and its rewrite cleared it.
+
+What the tests actually pin down, beyond construction: the polling lifecycle (first poll at 5s, 15s
+cadence after, stops on each of COMPLETED / FAILED / STOPPED, stops on clear, gives up after a 500,
+and a second `startUpscale` replaces the first subscription rather than running two in parallel);
+the dialog's double-click guard, retry-after-failure and warning filter; and the three screening
+guards in media-detail - image, missing mime type and source asset are all skipped, and a screening
+failure leaves the action unoffered rather than raising a snackbar.
+
+**One deliberate testing constraint, recorded because it is not obvious.** The snackbar helpers in
+`utils/handleMessageSnackbar.ts` do not use the injected `MatSnackBar` at all - they resolve
+`NotificationService` through the module-global `AppInjector`, which the first spec to call
+`setAppInjector` owns for the entire karma run (today that is `login.component.spec.ts`). Asserting
+on notifications would therefore make these specs order-dependent. They assert instead on the
+`console.error` that `handleErrorSnackbar` emits unconditionally before it notifies, which is the
+same signal `search.service.spec.ts` already relies on.
+
+### A gating gap the tests surfaced
+
+`§6a` requires that the UI not advertise what the deployment cannot do. It does, slightly. The
+button renders on `*ngIf="isVideo && showUpscaleButton"` with `showUpscaleButton` hardcoded `true`
+from `media-detail.component.html`; only the *disabled* state consults the screening. So with
+`VPE_ENABLED=false` the screening call fails, `vpeScreening` stays `undefined`, and the user gets a
+permanently disabled **Upscale** button tooltipped *"Checking eligibility..."* - a transient-sounding
+message that never resolves. Harmless, but it both advertises the feature and misstates why it is
+unavailable. The cheap fix is a distinct absent state for "screening failed" rather than the
+capabilities endpoint originally proposed.
+
+## 8. Phase 1 exit status and the Phase 2 gate
+
+### Where Phase 1 actually stands
+
+Measured against the `§6` work items rather than impression:
+
+| Item | State |
+|---|---|
+| Backend modules (`client`, `capabilities`, `preflight`, `payloads`, + `errors`, `gating`, `media_ops`, `segmentation`) | done |
+| VPE request DTO, output ingestion, `VPE_ENABLED` / `VPE_LOCATION` / `VPE_DRY_RUN` | done |
+| Separate VPE executor (`§6g`) | done |
+| Frontend upscale action + options dialog | done |
+| Backend tests / frontend tests | 1007 / 41 |
+| End-to-end run through the app | done, `§6h` |
+| Seam question | settled, `§6g` + `§6i` |
+| Service-agent dance for `vertex-bp` / `vertex-tune` | done - `scripts/vpe_bootstrap_project.sh`, `§8a` |
+| `UPGRADING.md` VPE section | done - `§8a` |
+| Deployed runtime SA allowlisted on the VPE project | **unverified** - the deployment blocker of `§6h` |
+
+So Phase 1 is **code-complete, proven on an allowlisted project, and now documented for a
+deployer**. One row remains open, and it is the one that was never ours: the allowlist itself.
+
+### `§8a` Closing the deployment gap
+
+Two of the three open rows above were closed together, because they are the same omission seen
+from two sides - nothing in the repo told a deployer what to prepare, and nothing prepared it.
+
+**`backend/scripts/vpe_bootstrap_project.sh`.** Deliberately not folded into `bootstrap.sh`:
+that script prepares the project Creative Studio is *deployed into*, and the allowlisted VPE
+project is frequently a different one. It enables the APIs, creates or verifies the I/O bucket,
+provisions the service agents, grants all three `roles/storage.admin`, grants the deployed
+runtime SA, and prints the settings filled in. Idempotent, with `--dry-run`.
+
+Two findings worth recording, because both shape what the script can promise:
+
+- **The bucket-ownership check is a hard failure, not a warning.** A bucket in the deployment
+  project rather than the allowlisted one is the cross-project mistake `§7.2` predicts, and it
+  fails at job time - minutes in, after a download and a cut - rather than at startup. Catching
+  it during setup is the only cheap place to catch it.
+- **VPE's outputs are never cleaned up, and nobody had noticed.** `_discard_segments` deletes the
+  input segments the worker uploaded, on success only - but the upscaled output VPE wrote under
+  `vpe/upscale/<id>/out_NN/` is left behind, and that is the 4K half. It accumulates for the life
+  of the deployment. The script therefore offers `--lifecycle-days N`, scoped to the
+  `vpe/upscale/` prefix so it is safe on a bucket shared with app media, and it refuses to
+  replace an existing lifecycle policy rather than silently discarding one. This is a bound, not
+  a fix; making the worker clean up after itself is the better answer and is not done.
+- **`gcp-sa-vertex-tune` cannot be automated.** There is no non-interactive gcloud surface for
+  starting a tuning job, so the start-and-cancel dance works for `vertex-bp` and not for
+  `vertex-tune`. The script detects the gap, prints the Console path, completes everything else,
+  and exits reporting what is still missing rather than pretending to have finished. The
+  batch-prediction arm is also best-effort: the agent is created on job *submission*, so a job
+  rejected downstream still provisions it, which is why a failed submission warns rather than
+  aborts.
+
+Verified against stubbed-gcloud scenarios rather than only read: a bare project, a fully
+prepared one (no changes, correct idempotent output), a bucket owned by another project (exits
+1 with the diagnosis), the full `--dry-run`, all four `--lifecycle-days` paths, and the emitted
+lifecycle JSON parsed back to confirm it is valid. Two dry-run reporting bugs surfaced that way -
+call-site `>/dev/null` swallowing the `would run` line so a grant it never performed reported as
+done, and all three agents printing an identical `service-<number>` prefix instead of their
+distinguishing names.
+
+**The single-project case.** The allowlisted project is often, but not always, a second project;
+where the app is deployed into the allowlisted project itself, `VPE_PROJECT_ID` simply names it
+and the worker's two storage clients resolve into one project. Nothing breaks: VPE traffic stays
+under `vpe/upscale/`, the master goes to `upscaled_videos/`, and cleanup only ever touches URIs
+it uploaded. A **dedicated bucket is still the right call**, for blast radius rather than
+correctness - the three service agents need `roles/storage.admin` on whatever `VPE_BUCKET` names,
+which on a shared media bucket is delete rights over every user's media, and a prefix-scoped
+lifecycle rule is easier to reason about on a bucket that holds nothing else.
+
+**`UPGRADING.md`.** A VPE section covering the no-migration finding, the per-project allowlist,
+the five settings with the two that ship empty on purpose, the cross-project bucket requirement,
+the bootstrap step, per-segment billing, and rollback by setting `VPE_ENABLED=false`.
+
+What this does **not** close: the allowlist itself. IAM is necessary and not sufficient, and the
+failure mode when a project is not allowlisted looks like an ordinary permission error - so the
+script says so explicitly rather than leaving a deployer to debug IAM that is already correct.
+
+### The Phase 2 gate, and why it should be measured before any Phase 2 code
+
+`§4` gates Phase 2 on resolving `§3.1`, and `§7.1` sharpens it to the commercial question: is the
+slate vertical, and therefore is anything past Phase 1 worth building? The capability registry
+already carries a doc-derived answer, and it is unfavourable.
+
+`veo-exp-a2v-generation` is recorded as `FIXED_FRAME_UNSTATED`: a 1280x720 output frame with **no
+`aspectRatio` parameter at all**. Off-spec stills are, per the doc, "resized and padded internally"
+rather than rejected - so a 720x1280 portrait still comes back **pillarboxed into landscape, leaving
+roughly 405x720 of real subject pixels, with no error raised**. For a 9:16 micronovela slate that is
+close to a non-feature, and it fails silently rather than loudly, which is worse.
+
+A second constraint deserves recording because it shapes the product, not just the code: **input
+audio must be exactly 8.0 seconds**. Longer tracks are truncated, shorter ones padded with silence,
+and the audio is converted internally to 2-channel 48 kHz. Dialogue beats therefore have to be cut
+to an exact 8s, or the capability silently clips a performance mid-word. Output is capped at 192
+frames of 720p.
+
+**All of that is read off the documentation, not measured.** The seam work is the precedent for why
+that distinction matters: the doc-derived expectation there was wrong in both directions. One live
+call settles it, and there are only three outcomes:
+
+1. **Rejected** with a clean error - Phase 2 is landscape-only, and that is a straightforward
+   over-restriction report for the VPE programme.
+2. **Pillarboxed 1280x720** - the documented behaviour is real, Phase 2 delivers ~405x720 of subject
+   for a vertical slate, and it drops down the queue behind Phase 3.
+3. **Genuine 720x1280 out** - the docs understate the model, and Phase 2 is worth building now.
+
+Only outcome 3 justifies the service path, and the difference between them is one generation.
+
+### Closing the gate: `scripts/vpe_a2v_orientation.py`
+
+Written and dry-run verified; it needs an allowlisted project to produce the answer.
+
+    python -m scripts.vpe_a2v_orientation --project P --bucket gs://B \
+        --audio line.wav --landscape still_16x9.png --portrait still_9x16.png
+
+It submits a **matched pair** - identical audio and prompt, one 16:9 still and one 9:16 still - and
+the landscape arm is the control. Without it a refusal cannot be attributed: it might be the
+portrait frame, or the audio, the prompt, the bucket or the allowlist. Only if the control succeeds
+and the portrait arm does not is orientation the cause. The verdict is derived rather than eyeballed,
+and where the portrait arm comes back landscape the script computes how much of the frame is
+actually subject.
+
+Two guards run before anything is billed. The audio must be within 50ms of **8.0s**, because an
+off-length track is silently truncated or silence-padded and would confound a run that is supposed
+to be measuring orientation alone; and the two stills must genuinely be the orientations they are
+passed as. Both exit 2 rather than proceeding.
+
+The payload goes through the shipped `build_payload`, so a green dry run says the *service's* path
+accepts these inputs rather than that the script's own idea of them is well-formed. `--dry-run`
+builds and validates both arms with no allowlist and no calls.
+
+### The actual Phase 2 delta, once the gate clears
+
+Smaller than Phase 1, because the generic layer is already capability-agnostic. `client.py`,
+`payloads.py`, `preflight.py` and all eight capability definitions need nothing. What is
+upscale-specific, and therefore what Phase 2 has to add alongside:
+
+- `vpe_service.py` - `check_upscalable`, `plan_upscale`, `build_segment_request` and
+  `_process_vpe_upscale_in_background` are all written against `VpeCapabilityId.UPSCALE`.
+- `vpe_controller.py` - two routes, both upscale.
+- A dialogue-driven preflight: exactly-8s audio, 1280x720 still, and the WAV/MP3/M4A/AAC mime set.
+- Frontend: unlike the upscaler this is *not* a post-process on an existing clip, so `§6a`'s
+  "post-process actions on assets, never new modes" rule does not decide the surface for it. That
+  question is open and should be settled before the UI is built.
+
+Note that the 8s audio rule and the 1280x720 still check are worth building **regardless of which
+outcome the probe returns**, since they are required under all three.
