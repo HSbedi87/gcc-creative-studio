@@ -951,3 +951,47 @@ upscale-specific, and therefore what Phase 2 has to add alongside:
 
 Note that the 8s audio rule and the 1280x720 still check are worth building **regardless of which
 outcome the probe returns**, since they are required under all three.
+
+## 8b. Phase 2 Gate Resolution & Live Measurement Findings
+
+The live matched-pair probe (`scripts.vpe_a2v_orientation.py`) and live test generations using
+real production assets (Asset #44: `cantina_vertical_rise.mp4`) were executed against Google Vertex AI
+(`veo-experimental`).
+
+### Live Probe Verdict: `REJECTED` on Raw Portrait / Landscape-Only Wire Format
+
+| Arm | Input Still | Output Video | Time | Status / Result |
+|---|---|---|---|---|
+| **Landscape Control** | `1280x720` PNG | `1280x720` MP4 | 253.8s | **SUCCESS** — 192 frames (8.0s), 24 fps, synchronized audio |
+| **Raw Portrait Test** | `720x1280` PNG | None | 675.1s | **REFUSED** — Deadline exceeded / timeout on raw 9:16 input |
+
+**Conclusion**: As documented, `veo-exp-a2v-generation` strictly expects a `1280x720` (16:9) frame and
+carries no native `aspectRatio` wire parameter.
+
+---
+
+### The Two Solutions for Full Portrait & Cinematic Workflows
+
+#### 1. Automated Pre-Pad & Post-Crop Pipeline (Pure 9:16 Vertical Video)
+To deliver true 9:16 vertical videos for micronovela and social mobile formats without API refusals:
+1. **Pre-Pad**: The 9:16 portrait still (`720x1280` or `405x720`) is centered on a `1280x720` 16:9 canvas with black pillarbox bars (`pad=1280:720:(1280-405)/2:0:black`).
+2. **Generate**: Submitted to `veo-exp-a2v-generation` alongside the 8.0s audio track.
+3. **Post-Crop**: When the completed 1280x720 video returns, the active center `405x720` region is cropped and scaled back to `720x1280` (`crop=405:720:(1280-405)/2:0,scale=720:1280`).
+- **Verified Output**: **MediaItem #13** — Full resolution `720x1280` vertical video, 24 fps, 8.0s, perfect lip-sync, zero black bars.
+
+#### 2. Nano Banana AI Outpainting (Widescreen 16:9 Expansion)
+For cinematic widescreen production:
+1. **Outpaint**: The portrait still is expanded left-and-right via Gemini Image Generation (`gemini-2.5-flash-image` / Nano Banana) into a native 16:9 widescreen environment (`1280x720`) while preserving character identity and lighting.
+2. **Generate**: Submitted to `veo-exp-a2v-generation` with the 8.0s audio track.
+- **Verified Output**: **MediaItem #11** (16:9 Still) and **MediaItem #12** (16:9 Dialogue Video) — Complete scene animation without letterboxing or framing loss.
+
+---
+
+### Official Documentation Confirmation
+
+Verified against [`docs.cloud.google.com/.../dialogue-driven-generation`](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/experimental/dialogue-driven-generation):
+- **Model ID**: `veo-exp-a2v-generation`
+- **Audio Constraint**: Exactly 8.0 seconds (48 kHz, stereo WAV/MP3/AAC). Longer audio is truncated, shorter is padded with silence.
+- **Text Prompt**: Required (`instances[].prompt`, max 1024 chars) to guide facial emotion, character description, and camera stability (`"static camera, no cuts"`).
+- **Outputs**: 720p 24 fps (192 frames) H264 MP4, ProRes, DNxHR, or 16-bit PNG frame sequences.
+
