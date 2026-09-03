@@ -30,14 +30,21 @@ logger = logging.getLogger(__name__)
 class GcsService:
     """A service for interacting with Google Cloud Storage."""
 
-    def __init__(self, bucket_name: str | None = None):
+    def __init__(
+        self,
+        bucket_name: str | None = None,
+        project_id: str | None = None,
+    ):
         """Initializes the GCS client and bucket."""
         self.cfg = config_service
-        self.client = storage.Client(project=self.cfg.PROJECT_ID)
+        self.project_id = project_id or self.cfg.PROJECT_ID
+        self.client = storage.Client(project=self.project_id)
         self.bucket_name = bucket_name or self.cfg.GENMEDIA_BUCKET
         self.bucket = self.client.bucket(self.bucket_name)
         logger.info(
-            "GcsService initialized for bucket: gs://%s", self.bucket_name
+            "GcsService initialized for bucket: gs://%s (project: %s)",
+            self.bucket_name,
+            self.project_id,
         )
 
     def download_from_gcs(

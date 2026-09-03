@@ -22,5 +22,7 @@ genmedia-agent-demos
 .agents
 # Local content-policy test bundle: generated clips, keyframes and results
 _review/
+downloads/
+GEMINI_OMNI_PROMPT_GUIDE.md
 
 

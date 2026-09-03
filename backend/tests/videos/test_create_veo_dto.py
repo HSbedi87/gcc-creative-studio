@@ -180,11 +180,14 @@ def test_create_veo_dto_with_omni_references():
     dto = CreateVeoDto(
         prompt="Test Omni",
         workspace_id=1,
-        generation_model=GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+        generation_model=GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
         reference_video={"id": 10, "type": "media_item"},
         parent_media_item_id=15,
     )
-    assert dto.generation_model == GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW
+    assert (
+        dto.generation_model
+        == GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW
+    )
     assert dto.reference_video.id == 10
     assert dto.reference_video.type == "media_item"
     assert dto.parent_media_item_id == 15
@@ -324,7 +327,7 @@ def test_veo_reference_ceiling_not_widened_by_omni():
 
 
 def test_validate_resolution_by_model():
-    # Gemini Omni - 1K is OK
+    # Gemini Omni 1.0 - 1K is OK
     CreateVeoDto(
         prompt="Test",
         workspace_id=1,
@@ -332,7 +335,7 @@ def test_validate_resolution_by_model():
         resolution="1K",
     )
 
-    # Gemini Omni - 2K is error
+    # Gemini Omni 1.0 - 2K is error
     with pytest.raises(ValidationError) as exc_info:
         CreateVeoDto(
             prompt="Test",
@@ -341,6 +344,24 @@ def test_validate_resolution_by_model():
             resolution="2K",
         )
     assert "does not support resolution '2K'" in str(exc_info.value)
+
+    # Gemini Omni 1.1 - 360p, 720p, 1080p, 4K, 1K, 2K are all OK
+    for res in ["360p", "720p", "1080p", "4K", "1K", "2K"]:
+        dto = CreateVeoDto(
+            prompt="Test Omni 1.1",
+            workspace_id=1,
+            generation_model=GenerationModelEnum.GEMINI_OMNI_1_1_FLASH,
+            resolution=res,
+        )
+        assert dto.resolution == res
+
+        dto_preview = CreateVeoDto(
+            prompt="Test Omni 1.1 Preview",
+            workspace_id=1,
+            generation_model=GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
+            resolution=res,
+        )
+        assert dto_preview.resolution == res
 
     # Veo 3.1 Lite - 2K is OK
     CreateVeoDto(
@@ -367,6 +388,39 @@ def test_validate_resolution_by_model():
         generation_model=GenerationModelEnum.VEO_3_1_GENERATE_001,
         resolution="4K",
     )
+
+
+def test_omni_1_1_allows_extension_and_interpolation():
+    """Omni 1.1 supports video extension and first+last frame interpolation."""
+    dto_ext = CreateVeoDto(
+        prompt="Extend this scene",
+        workspace_id=1,
+        generation_model=GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
+        source_video_asset_id={"id": 5, "type": "source_asset"},
+    )
+    assert dto_ext.source_video_asset_id.id == 5
+
+    dto_interp = CreateVeoDto(
+        prompt="Interpolate between frames",
+        workspace_id=1,
+        generation_model=GenerationModelEnum.GEMINI_OMNI_1_1_FLASH,
+        start_image_asset_id={"id": 5, "type": "source_asset"},
+        end_image_asset_id={"id": 6, "type": "source_asset"},
+    )
+    assert dto_interp.start_image_asset_id.id == 5
+    assert dto_interp.end_image_asset_id.id == 6
+
+
+def test_omni_1_1_rejects_audio_references():
+    """Omni 1.1 still does not support audio references."""
+    with pytest.raises(ValidationError) as exc_info:
+        CreateVeoDto(
+            prompt="Test Omni 1.1",
+            workspace_id=1,
+            generation_model=GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
+            reference_audio={"id": 20, "type": "media_item"},
+        )
+    assert "audio references" in str(exc_info.value)
 
 
 def test_omni_accepts_edit_source():
@@ -422,11 +476,66 @@ def test_edit_source_rejects_a_second_video():
         CreateVeoDto(
             prompt="Edit this",
             workspace_id=1,
-            generation_model=GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+            generation_model=GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
             edit_source={"id": 7, "type": "source_asset"},
             reference_video={"id": 8, "type": "source_asset"},
         )
-    assert "two videos" in str(exc_info.value)
+    assert "two video sources" in str(exc_info.value)
+
+
+def test_edit_source_rejects_reference_videos_list():
+    with pytest.raises(ValidationError) as exc_info:
+        CreateVeoDto(
+            prompt="Edit this",
+            workspace_id=1,
+            generation_model=GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
+            edit_source={"id": 7, "type": "source_asset"},
+            reference_videos=[{"id": 8, "type": "source_asset"}],
+        )
+    assert "two video sources" in str(exc_info.value)
+
+
+def test_omni_1_1_allows_multiple_reference_videos():
+    dto = CreateVeoDto(
+        prompt="Generate video using reference videos",
+        workspace_id=1,
+        generation_model=GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
+        reference_videos=[
+            {"id": 1, "type": "source_asset"},
+            {"id": 2, "type": "source_asset"},
+        ],
+    )
+    assert dto.reference_videos is not None
+    assert len(dto.reference_videos) == 2
+
+
+def test_omni_1_1_rejects_exceeding_max_reference_videos():
+    with pytest.raises(ValidationError) as exc_info:
+        CreateVeoDto(
+            prompt="Too many reference videos",
+            workspace_id=1,
+            generation_model=GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
+            reference_videos=[
+                {"id": 1, "type": "source_asset"},
+                {"id": 2, "type": "source_asset"},
+                {"id": 3, "type": "source_asset"},
+                {"id": 4, "type": "source_asset"},
+            ],
+        )
+    assert "at most 3 reference videos" in str(
+        exc_info.value
+    ) or "List should have at most 3 items" in str(exc_info.value)
+
+
+def test_omni_1_0_rejects_reference_videos():
+    with pytest.raises(ValidationError) as exc_info:
+        CreateVeoDto(
+            prompt="Omni 1.0 does not support video references",
+            workspace_id=1,
+            generation_model=GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+            reference_videos=[{"id": 1, "type": "source_asset"}],
+        )
+    assert "video references" in str(exc_info.value)
 
 
 def test_edit_source_rejects_a_start_frame():

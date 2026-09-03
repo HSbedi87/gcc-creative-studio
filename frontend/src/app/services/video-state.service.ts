@@ -29,7 +29,7 @@ const STORAGE_KEY = 'video_state';
 interface VideoState {
   prompt: string;
   aspectRatio: string;
-  resolution: '1K' | '2K' | '4K';
+  resolution: '1K' | '2K' | '4K' | '360p' | '720p' | '1080p';
   model: string;
   style: string | null;
   colorAndTone: string | null;
@@ -45,6 +45,7 @@ interface VideoState {
   referenceImages: ReferenceImage[];
   referenceImagesType: 'ASSET' | 'STYLE';
   referenceVideo: ReferenceVideo | null;
+  referenceVideos: ReferenceVideo[];
   referenceAudio: ReferenceAudio | null;
   /** The clip being modified in Edit Video mode. */
   editSource: ReferenceVideo | null;
@@ -64,7 +65,7 @@ export class VideoStateService {
       prompt: '',
       aspectRatio: '16:9',
       resolution: '1K',
-      model: 'gemini-omni-flash-preview',
+      model: 'gemini-omni-1.1-flash-preview',
       style: null,
       colorAndTone: null,
       lighting: null,
@@ -79,6 +80,7 @@ export class VideoStateService {
       referenceImages: [],
       referenceImagesType: 'ASSET',
       referenceVideo: null,
+      referenceVideos: [],
       referenceAudio: null,
       editSource: null,
       stripSourceAudio: true,
@@ -149,6 +151,10 @@ export class VideoStateService {
               referenceVideo: parsed.referenceVideo?.id
                 ? parsed.referenceVideo
                 : null,
+              referenceVideos: (
+                parsed.referenceVideos ??
+                (parsed.referenceVideo?.id ? [parsed.referenceVideo] : [])
+              ).filter((ref: ReferenceVideo) => !!ref && !!ref.id),
               referenceAudio: parsed.referenceAudio?.id
                 ? parsed.referenceAudio
                 : null,

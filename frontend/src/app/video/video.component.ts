@@ -114,6 +114,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
   referenceImages: ReferenceImage[] = [];
   referenceImagesType: 'ASSET' | 'STYLE' = 'ASSET';
   referenceVideo: ReferenceVideo | null = null;
+  referenceVideos: ReferenceVideo[] = [];
   referenceAudio: ReferenceAudio | null = null;
   parentMediaItemId: number | null = null;
   parentMediaIndex = 0;
@@ -143,7 +144,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
 
   searchRequest: VeoRequest = {
     prompt: '',
-    generationModel: 'gemini-omni-flash-preview',
+    generationModel: 'gemini-omni-1.1-flash-preview',
     aspectRatio: '16:9',
     numberOfMedia: 4,
     style: null,
@@ -236,10 +237,11 @@ export class VideoComponent implements OnInit, AfterViewInit {
     @Inject(PLATFORM_ID) private platformId: Object,
   ) {
     this.generationModels = MODEL_CONFIGS.filter(m => m.type === 'VIDEO');
-    this.searchRequest.generationModel = 'gemini-omni-flash-preview';
+    this.searchRequest.generationModel = 'gemini-omni-1.1-flash-preview';
     this.selectedGenerationModel =
-      this.generationModels.find(m => m.value === 'gemini-omni-flash-preview')
-        ?.viewValue || this.generationModels[0].viewValue;
+      this.generationModels.find(
+        m => m.value === 'gemini-omni-1.1-flash-preview',
+      )?.viewValue || this.generationModels[0].viewValue;
 
     this.isBrowser = isPlatformBrowser(this.platformId);
     this.activeVideoJob$ = this.service.activeVideoJob$.pipe(
@@ -323,6 +325,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
       referenceImages: this.referenceImages,
       referenceImagesType: this.referenceImagesType,
       referenceVideo: this.referenceVideo,
+      referenceVideos: this.referenceVideos,
       referenceAudio: this.referenceAudio,
       editSource: this.editSource,
       stripSourceAudio: this.stripSourceAudio,
@@ -357,6 +360,9 @@ export class VideoComponent implements OnInit, AfterViewInit {
     this.referenceImages = state.referenceImages || [];
     this.referenceImagesType = state.referenceImagesType || 'ASSET';
     this.referenceVideo = state.referenceVideo || null;
+    this.referenceVideos =
+      state.referenceVideos ||
+      (state.referenceVideo ? [state.referenceVideo] : []);
     this.referenceAudio = state.referenceAudio || null;
     this.editSource = state.editSource || null;
     this.stripSourceAudio = state.stripSourceAudio ?? true;
@@ -471,6 +477,19 @@ export class VideoComponent implements OnInit, AfterViewInit {
     }
     if (!capabilities.supportsVideoReference) {
       this.referenceVideo = null;
+      this.referenceVideos = [];
+    }
+    const maxVideoRefs =
+      capabilities.maxReferenceVideos ??
+      (capabilities.supportsVideoReference ? 3 : 0);
+    if (maxVideoRefs && this.referenceVideos.length > maxVideoRefs) {
+      const dropped = this.referenceVideos.length - maxVideoRefs;
+      this.referenceVideos = this.referenceVideos.slice(0, maxVideoRefs);
+      this.referenceVideo = this.referenceVideos[0] || null;
+      handleSuccessSnackbar(
+        this._snackBar,
+        `${model.viewValue} takes at most ${maxVideoRefs} reference videos, so we removed the last ${dropped}.`,
+      );
     }
     // An end frame can arrive either as an uploaded asset or as a media item,
     // so checking only endImageAssetId left media-item end frames attached and
@@ -564,7 +583,12 @@ export class VideoComponent implements OnInit, AfterViewInit {
 
   /** First model that supports a mode, preferring Veo 3.1 then Omni. */
   private findModelForMode(mode: string) {
-    const preferred = ['veo-3.1-generate-001', 'gemini-omni-flash-preview'];
+    const preferred = [
+      'veo-3.1-generate-001',
+      'gemini-omni-1.1-flash-preview',
+      'gemini-omni-1.1-flash',
+      'gemini-omni-flash-preview',
+    ];
     for (const value of preferred) {
       const candidate = this.generationModels.find(m => m.value === value);
       if (
@@ -609,7 +633,9 @@ export class VideoComponent implements OnInit, AfterViewInit {
     this.saveState();
   }
 
-  onResolutionChanged(resolution: '1K' | '2K' | '4K') {
+  onResolutionChanged(
+    resolution: '360p' | '1K' | '2K' | '4K' | '720p' | '1080p',
+  ) {
     this.searchRequest.resolution = resolution;
     this.saveState();
   }
@@ -844,7 +870,10 @@ export class VideoComponent implements OnInit, AfterViewInit {
       !this.isConcatenateMode
     ) {
       const omniModel = this.generationModels.find(
-        m => m.value === 'gemini-omni-flash-preview',
+        m =>
+          m.value === 'gemini-omni-1.1-flash-preview' ||
+          m.value === 'gemini-omni-1.1-flash' ||
+          m.value === 'gemini-omni-flash-preview',
       );
       if (omniModel) {
         this.selectModel(omniModel);
@@ -958,6 +987,15 @@ export class VideoComponent implements OnInit, AfterViewInit {
               index: this.referenceVideo.index,
             }
           : undefined,
+      referenceVideos:
+        this.currentMode === 'Ingredients to Video' &&
+        this.referenceVideos.length > 0
+          ? this.referenceVideos.map(ref => ({
+              id: ref.id,
+              type: ref.type,
+              index: ref.index,
+            }))
+          : undefined,
       referenceAudio:
         this.currentMode === 'Ingredients to Video' && this.referenceAudio
           ? {
@@ -1061,6 +1099,7 @@ export class VideoComponent implements OnInit, AfterViewInit {
 
     this.referenceImages = [];
     this.referenceVideo = null;
+    this.referenceVideos = [];
     this.referenceAudio = null;
     this.editSource = null;
     this.parentMediaItemId = null;
@@ -1185,7 +1224,10 @@ export class VideoComponent implements OnInit, AfterViewInit {
 
       if (isVeo30) {
         const omniModel = this.generationModels.find(
-          m => m.value === 'gemini-omni-flash-preview',
+          m =>
+            m.value === 'gemini-omni-1.1-flash-preview' ||
+            m.value === 'gemini-omni-1.1-flash' ||
+            m.value === 'gemini-omni-flash-preview',
         );
         if (omniModel) {
           this.selectModel(omniModel);
@@ -1723,7 +1765,10 @@ export class VideoComponent implements OnInit, AfterViewInit {
     this.parentMediaIndex = source.parentMediaIndex ?? source.index ?? 0;
 
     const omniModel = this.generationModels.find(
-      m => m.value === 'gemini-omni-flash-preview',
+      m =>
+        m.value === 'gemini-omni-1.1-flash-preview' ||
+        m.value === 'gemini-omni-1.1-flash' ||
+        m.value === 'gemini-omni-flash-preview',
     );
     if (omniModel) {
       this.selectModel(omniModel);
@@ -1788,13 +1833,24 @@ export class VideoComponent implements OnInit, AfterViewInit {
   }
 
   openVideoSelectorForReference(): void {
+    const config = MODEL_CONFIGS.find(
+      cfg => cfg.value === this.searchRequest.generationModel,
+    );
+    const maxReferenceVideos =
+      config?.capabilities.maxReferenceVideos ??
+      (config?.capabilities.supportsVideoReference ? 3 : 0);
+    const remainingSlots = maxReferenceVideos - this.referenceVideos.length;
+
+    if (remainingSlots <= 0) return;
+
     const dialogRef = this.dialog.open(ImageSelectorComponent, {
       width: '90vw',
       height: '80vh',
       maxWidth: '90vw',
       data: {
         mimeType: 'video/*',
-        multiSelect: false,
+        multiSelect: true,
+        maxSelection: remainingSlots,
       },
       panelClass: 'image-selector-dialog',
     });
@@ -1802,36 +1858,47 @@ export class VideoComponent implements OnInit, AfterViewInit {
     dialogRef.afterClosed().subscribe((result: any) => {
       if (!result) return;
 
-      const res = Array.isArray(result) ? result[0] : result;
-      if ('gcsUri' in res) {
-        this.referenceVideo = {
-          id: res.id,
-          type: 'source_asset',
-          previewUrl: res.presignedThumbnailUrl || res.presignedUrl || '',
-          index: 0,
-        };
-      } else {
-        const thumbnail =
-          res.mediaItem.presignedThumbnailUrls?.[res.selectedIndex];
-        const previewUrl =
-          thumbnail || res.mediaItem.presignedUrls?.[res.selectedIndex];
-        if (previewUrl) {
-          this.referenceVideo = {
-            id: res.mediaItem.id,
-            type: 'media_item',
-            previewUrl: previewUrl,
-            index: res.selectedIndex,
-          };
+      const results = Array.isArray(result) ? result : [result];
+      results.forEach(res => {
+        if (this.referenceVideos.length < maxReferenceVideos) {
+          if ('gcsUri' in res) {
+            this.referenceVideos.push({
+              id: res.id,
+              type: 'source_asset',
+              previewUrl: res.presignedThumbnailUrl || res.presignedUrl || '',
+              index: 0,
+            });
+          } else {
+            const thumbnail =
+              res.mediaItem.presignedThumbnailUrls?.[res.selectedIndex];
+            const previewUrl =
+              thumbnail || res.mediaItem.presignedUrls?.[res.selectedIndex];
+            if (previewUrl) {
+              this.referenceVideos.push({
+                id: res.mediaItem.id,
+                type: 'media_item',
+                previewUrl: previewUrl,
+                index: res.selectedIndex,
+              });
+            }
+          }
         }
-      }
+      });
+      this.referenceVideo = this.referenceVideos[0] || null;
       this.handleOmniModelSwitch();
       this.saveState();
     });
   }
 
-  clearReferenceVideo(event: Event): void {
-    event.stopPropagation();
-    this.referenceVideo = null;
+  clearReferenceVideo(data: {index: number; event: Event} | Event): void {
+    if (typeof data === 'object' && 'index' in data) {
+      data.event?.stopPropagation();
+      this.referenceVideos.splice(data.index, 1);
+    } else {
+      (data as Event)?.stopPropagation();
+      this.referenceVideos = [];
+    }
+    this.referenceVideo = this.referenceVideos[0] || null;
     this.saveState();
   }
 
@@ -1944,14 +2011,18 @@ export class VideoComponent implements OnInit, AfterViewInit {
     // Audio references are unsupported by every current video model: the
     // Interactions API accepts an audio part and then ignores it, so switching
     // models cannot make one work. Only a video reference justifies a switch.
-    if (this.referenceAudio && !this.referenceVideo) {
+    const hasVideoRef =
+      this.referenceVideo !== null || this.referenceVideos.length > 0;
+    if (this.referenceAudio && !hasVideoRef) {
       return;
     }
 
-    if (this.referenceVideo) {
+    if (hasVideoRef) {
       const omniModel = this.generationModels.find(
         m =>
-          m.value === 'gemini-omni-flash-preview' &&
+          (m.value === 'gemini-omni-1.1-flash-preview' ||
+            m.value === 'gemini-omni-1.1-flash' ||
+            m.value === 'gemini-omni-flash-preview') &&
           m.capabilities.supportsVideoReference,
       );
       if (omniModel) {
@@ -2101,7 +2172,10 @@ export class VideoComponent implements OnInit, AfterViewInit {
       }
 
       const omniModel = this.generationModels.find(
-        m => m.value === 'gemini-omni-flash-preview',
+        m =>
+          m.value === 'gemini-omni-1.1-flash-preview' ||
+          m.value === 'gemini-omni-1.1-flash' ||
+          m.value === 'gemini-omni-flash-preview',
       );
       if (omniModel) {
         if (this.searchRequest.generationModel !== omniModel.value) {

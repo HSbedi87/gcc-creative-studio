@@ -40,7 +40,14 @@ from src.common.schema.media_item_model import (
 # GEMINI_OMNI ("gemini-omni-generate-preview") is intentionally absent: it is
 # not a real model. Vertex rejects it with "Unsupported model interaction". The
 # enum member survives only so historical rows deserialize.
-OMNI_MODELS = frozenset({GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW})
+OMNI_1_0_MODELS = frozenset({GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW})
+OMNI_1_1_MODELS = frozenset(
+    {
+        GenerationModelEnum.GEMINI_OMNI_1_1_FLASH,
+        GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
+    }
+)
+OMNI_MODELS = OMNI_1_0_MODELS | OMNI_1_1_MODELS
 
 # Widest bounds accepted by any supported model. The real, per-model limits are
 # enforced in CreateVeoDto.validate_cross_fields.
@@ -64,6 +71,8 @@ VEO_DURATION_CHOICES = frozenset({4, 6, 8})
 # point where the API pushes back; lower it if quality degrades in practice.
 OMNI_MAX_REFERENCE_IMAGES = 7
 VEO_MAX_REFERENCE_IMAGES = 3
+OMNI_MAX_REFERENCE_VIDEOS = 3
+MAX_REFERENCE_VIDEOS_ANY_MODEL = 3
 
 
 class ReferenceImageDto(BaseDto):
@@ -181,6 +190,11 @@ class CreateVeoDto(BaseDto):
         default=None,
         description="Object containing ID and type of asset to use as a reference video.",
     )
+    reference_videos: list[AssetReferenceDto] | None = Field(
+        default=None,
+        max_length=MAX_REFERENCE_VIDEOS_ANY_MODEL,
+        description="List of reference videos to steer generation.",
+    )
     reference_audio: AssetReferenceDto | None = Field(
         default=None,
         description="Object containing ID and type of asset to use as a reference audio.",
@@ -216,7 +230,7 @@ class CreateVeoDto(BaseDto):
             "interaction, so the index selects which conversation to resume."
         ),
     )
-    resolution: Literal["1K", "2K", "4K"] = Field(
+    resolution: Literal["1K", "2K", "4K", "360p", "720p", "1080p"] = Field(
         default="1K",
         description="Resolution of the generated videos.",
     )
@@ -265,6 +279,7 @@ class CreateVeoDto(BaseDto):
         has_asset_references = (
             bool(self.reference_images)
             or bool(self.reference_video)
+            or bool(self.reference_videos)
             or bool(self.reference_audio)
         )
         has_any_references = has_asset_references or reference_roles_present
@@ -276,6 +291,8 @@ class CreateVeoDto(BaseDto):
                 GenerationModelEnum.VEO_3_1_LITE_GENERATE_001,
                 GenerationModelEnum.VEO_3_1_FAST_GENERATE_001,
                 GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
+                GenerationModelEnum.GEMINI_OMNI_1_1_FLASH,
+                GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
             }
             if model not in supported_reference_models:
                 supported = ", ".join(
@@ -284,6 +301,14 @@ class CreateVeoDto(BaseDto):
                 raise ValueError(
                     "Reference images/media are only supported by these "
                     f"models: {supported}.",
+                )
+
+            if (
+                self.reference_video or self.reference_videos
+            ) and model not in OMNI_1_1_MODELS:
+                raise ValueError(
+                    f"Model '{model.value}' does not support video references. "
+                    f"Use '{GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW.value}'.",
                 )
 
             start_image_present = bool(self.start_image_asset_id)
@@ -314,14 +339,25 @@ class CreateVeoDto(BaseDto):
                 )
 
         # Validate model-specific resolution limits
-        is_omni = model in OMNI_MODELS
+        is_omni_1_0 = model in OMNI_1_0_MODELS
+        is_omni_1_1 = model in OMNI_1_1_MODELS
+        is_omni = is_omni_1_0 or is_omni_1_1
 
-        if is_omni:
-            allowed_resolutions = {"1K"}
+        if is_omni_1_0:
+            allowed_resolutions = {"1K", "720p"}
+        elif is_omni_1_1:
+            allowed_resolutions = {
+                "1K",
+                "2K",
+                "4K",
+                "360p",
+                "720p",
+                "1080p",
+            }
         elif model == GenerationModelEnum.VEO_3_1_LITE_GENERATE_001:
-            allowed_resolutions = {"1K", "2K"}
+            allowed_resolutions = {"1K", "2K", "720p", "1080p"}
         else:
-            allowed_resolutions = {"1K", "2K", "4K"}
+            allowed_resolutions = {"1K", "2K", "4K", "720p", "1080p"}
 
         if self.resolution not in allowed_resolutions:
             raise ValueError(
@@ -342,6 +378,17 @@ class CreateVeoDto(BaseDto):
                 f"Model '{model.value}' supports at most "
                 f"{max_reference_images} reference images, "
                 f"got {len(self.reference_images)}.",
+            )
+
+        max_reference_videos = OMNI_MAX_REFERENCE_VIDEOS if is_omni_1_1 else 0
+        if (
+            self.reference_videos
+            and len(self.reference_videos) > max_reference_videos
+        ):
+            raise ValueError(
+                f"Model '{model.value}' supports at most "
+                f"{max_reference_videos} reference videos, "
+                f"got {len(self.reference_videos)}.",
             )
 
         # Duration also differs per model, and not just in bounds: Omni takes a
@@ -366,7 +413,7 @@ class CreateVeoDto(BaseDto):
         elif self.edit_source:
             raise ValueError(
                 f"Model '{model.value}' does not support video editing. "
-                f"Use '{GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW.value}'.",
+                f"Use '{GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW.value}'.",
             )
 
         # Reference images ARE allowed alongside edit_source: Google's Vertex
@@ -379,10 +426,10 @@ class CreateVeoDto(BaseDto):
                 "edit_source cannot be combined with a start frame: an edit "
                 "modifies an existing clip rather than starting a new one.",
             )
-        if self.edit_source and self.reference_video:
+        if self.edit_source and (self.reference_video or self.reference_videos):
             raise ValueError(
-                "edit_source cannot be combined with reference_video: the "
-                "model cannot reason across two videos in one request.",
+                "edit_source cannot be combined with reference videos: the "
+                "model cannot reason across two video sources in one request.",
             )
 
         return self
@@ -393,10 +440,10 @@ class CreateVeoDto(BaseDto):
     ) -> None:
         """Rejects inputs Gemini Omni accepts in its schema but cannot process.
 
-        Omni does not support video extension, first+last frame interpolation,
-        or audio references. The Interactions API accepts these parts without
-        erroring and then silently ignores them, so validating here is the only
-        way the caller learns the request would not do what they asked.
+        Omni 1.0 does not support video extension, first+last frame interpolation,
+        or video references.
+        Omni 1.1 supports extension, interpolation, and video references.
+        Neither model supports audio references.
         """
         unsupported: list[str] = []
 
@@ -404,32 +451,38 @@ class CreateVeoDto(BaseDto):
         extension = "video extension"
         interpolation = "first+last frame interpolation"
 
-        if self.source_video_asset_id:
-            unsupported.append(
-                f"{extension} (source_video_asset_id) — {use_veo}",
-            )
+        if model in OMNI_1_0_MODELS:
+            if self.source_video_asset_id:
+                unsupported.append(
+                    f"{extension} (source_video_asset_id) — {use_veo}",
+                )
 
-        if self.end_image_asset_id:
-            unsupported.append(
-                f"{interpolation} (end_image_asset_id) — {use_veo}",
-            )
+            if self.end_image_asset_id:
+                unsupported.append(
+                    f"{interpolation} (end_image_asset_id) — {use_veo}",
+                )
+
+            if self.reference_video or self.reference_videos:
+                unsupported.append(
+                    "video references (reference_video/reference_videos) — use Gemini Omni 1.1 Flash instead",
+                )
+
+            if self.source_media_items:
+                roles = {item.role for item in self.source_media_items}
+                if AssetRoleEnum.VIDEO_EXTENSION_SOURCE in roles:
+                    unsupported.append(
+                        f"{extension} (video_extension_source role) — {use_veo}",
+                    )
+                if AssetRoleEnum.END_FRAME in roles:
+                    unsupported.append(
+                        f"{interpolation} (end_frame role) — {use_veo}",
+                    )
 
         if self.reference_audio:
             unsupported.append(
                 "audio references (reference_audio) — describe the "
                 "audio in the prompt instead",
             )
-
-        if self.source_media_items:
-            roles = {item.role for item in self.source_media_items}
-            if AssetRoleEnum.VIDEO_EXTENSION_SOURCE in roles:
-                unsupported.append(
-                    f"{extension} (video_extension_source role) — {use_veo}",
-                )
-            if AssetRoleEnum.END_FRAME in roles:
-                unsupported.append(
-                    f"{interpolation} (end_frame role) — {use_veo}",
-                )
 
         if unsupported:
             raise ValueError(
@@ -464,6 +517,8 @@ class CreateVeoDto(BaseDto):
         failure to the background worker where the user sees a generic error.
         """
         valid_video_ratios = [
+            GenerationModelEnum.GEMINI_OMNI_1_1_FLASH,
+            GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
             GenerationModelEnum.GEMINI_OMNI_FLASH_PREVIEW,
             GenerationModelEnum.VEO_3_1_PREVIEW,
             GenerationModelEnum.VEO_3_1_GENERATE_001,

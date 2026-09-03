@@ -64,6 +64,36 @@ class TestCreateWorkspace:
         assert data["name"] == "My Workspace"
         assert data["id"] == 1
 
+    def test_create_workspace_with_gcp_config(
+        self,
+        api_client,
+        mock_workspace_service,
+        mock_user,
+    ):
+        mock_workspace = WorkspaceModel(
+            id=2,
+            name="Novela Workspace",
+            owner_id=mock_user.id,
+            gcp_project_id="micronovela-project",
+            gcs_bucket_name="micronovela-bucket",
+        )
+        mock_workspace_service.create_workspace.return_value = mock_workspace
+
+        response = api_client.post(
+            "/api/workspaces",
+            json={
+                "name": "Novela Workspace",
+                "gcpProjectId": "micronovela-project",
+                "gcsBucketName": "micronovela-bucket",
+            },
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        data = response.json()
+        assert data["name"] == "Novela Workspace"
+        assert data["gcpProjectId"] == "micronovela-project"
+        assert data["gcsBucketName"] == "micronovela-bucket"
+
 
 class TestListMyWorkspaces:
     """Tests for GET /api/workspaces."""
@@ -117,3 +147,49 @@ class TestInviteUser:
         assert (
             "Workspace or user to invite not found" in response.json()["detail"]
         )
+
+
+class TestUpdateWorkspaceGcpConfig:
+    """Tests for PATCH /api/workspaces/{workspace_id}/gcp-config."""
+
+    def test_update_workspace_gcp_config_success(
+        self,
+        api_client,
+        mock_workspace_service,
+        mock_user,
+    ):
+        mock_workspace = WorkspaceModel(
+            id=1,
+            name="My Workspace",
+            owner_id=mock_user.id,
+            gcp_project_id="updated-project",
+            gcs_bucket_name="updated-bucket",
+        )
+        mock_workspace_service.update_workspace_gcp_config.return_value = (
+            mock_workspace
+        )
+
+        response = api_client.patch(
+            "/api/workspaces/1/gcp-config",
+            json={
+                "gcpProjectId": "updated-project",
+                "gcsBucketName": "updated-bucket",
+            },
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["gcpProjectId"] == "updated-project"
+        assert data["gcsBucketName"] == "updated-bucket"
+
+    def test_update_workspace_gcp_config_invalid_project_id(
+        self,
+        api_client,
+    ):
+        response = api_client.patch(
+            "/api/workspaces/1/gcp-config",
+            json={
+                "gcpProjectId": "INVALID_UPPERCASE_PROJECT",
+            },
+        )
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY

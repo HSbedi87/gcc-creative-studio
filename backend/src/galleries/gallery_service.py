@@ -15,6 +15,7 @@
 import asyncio
 import logging
 import mimetypes
+import pathlib
 import tempfile
 import zipfile
 
@@ -721,3 +722,50 @@ class GalleryService:
                 logger.error(f"Error copying {item.type} {item.id}: {e}")
 
         return {"copied_count": copied_count}
+
+    async def stream_gcs_media(self, gcs_uri: str) -> StreamingResponse:
+        """Streams a GCS media file directly to the client for playback / preview."""
+        if not gcs_uri or not gcs_uri.startswith("gs://"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid GCS URI provided",
+            )
+
+        try:
+            bucket_name, blob_name = gcs_uri.replace("gs://", "").split("/", 1)
+            bucket = self.gcs_service.client.bucket(bucket_name)
+            blob = bucket.blob(blob_name)
+
+            if not await asyncio.to_thread(blob.exists):
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Media file not found in storage",
+                )
+
+            content_type = blob.content_type
+            if not content_type:
+                guessed_type, _ = mimetypes.guess_type(blob_name)
+                content_type = guessed_type or "application/octet-stream"
+
+            def iter_blob():
+                with blob.open("rb") as f:
+                    while chunk := f.read(256 * 1024):
+                        yield chunk
+
+            return StreamingResponse(
+                iter_blob(),
+                media_type=content_type,
+                headers={
+                    "Accept-Ranges": "bytes",
+                    "Content-Disposition": f'inline; filename="{pathlib.Path(blob_name).name}"',
+                    "Cache-Control": "public, max-age=3600",
+                },
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("Error streaming media for %s: %s", gcs_uri, e)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=str(e),
+            )

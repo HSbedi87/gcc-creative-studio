@@ -106,9 +106,12 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
     return this.selectedMode();
   }
 
-  @Input() set resolution(val: '1K' | '2K' | '4K' | undefined) {
+  @Input() set resolution(
+    val: '360p' | '1K' | '2K' | '4K' | '720p' | '1080p' | undefined,
+  ) {
     if (val) {
-      this.selectedResolution.set(val);
+      const normalized = val === '720p' ? '1K' : val === '1080p' ? '2K' : val;
+      this.selectedResolution.set(normalized as '360p' | '1K' | '2K' | '4K');
     }
   }
   @Input() set duration(val: number | undefined) {
@@ -122,7 +125,9 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
   @Output() rewriteClicked = new EventEmitter<void>();
   @Output() modelSelected = new EventEmitter<any>();
   @Output() promptChanged = new EventEmitter<string>();
-  @Output() resolutionChanged = new EventEmitter<'1K' | '2K' | '4K'>();
+  @Output() resolutionChanged = new EventEmitter<
+    '360p' | '1K' | '2K' | '4K' | '720p' | '1080p'
+  >();
   @Output() durationChanged = new EventEmitter<number>();
   @Output() aspectRatioChanged = new EventEmitter<string>();
   @Output() outputsChanged = new EventEmitter<number>();
@@ -142,7 +147,9 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
   }>();
   @Output() toggleReferenceImagesType = new EventEmitter<boolean>();
   @Output() openVideoSelectorForReference = new EventEmitter<void>();
-  @Output() clearReferenceVideo = new EventEmitter<Event>();
+  @Output() clearReferenceVideo = new EventEmitter<
+    {index: number; event: Event} | Event
+  >();
   @Output() openVideoSelectorForEdit = new EventEmitter<void>();
   @Output() clearEditSource = new EventEmitter<Event>();
   @Output() stripSourceAudioChanged = new EventEmitter<boolean>();
@@ -156,6 +163,14 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
   @Input() referenceImages: ReferenceImage[] = [];
   @Input() referenceImagesType: 'ASSET' | 'STYLE' = 'ASSET';
   @Input() referenceVideo: any | null = null;
+  @Input() referenceVideos: any[] = [];
+
+  get effectiveReferenceVideos(): any[] {
+    if (this.referenceVideos && this.referenceVideos.length > 0) {
+      return this.referenceVideos;
+    }
+    return this.referenceVideo ? [this.referenceVideo] : [];
+  }
   /** The clip being modified in Edit Video mode. */
   @Input() editSource: ReferenceVideo | null = null;
   @Input() stripSourceAudio = true;
@@ -198,7 +213,31 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
   }
 
   // All possible resolutions
-  readonly ALL_RESOLUTIONS: ('1K' | '2K' | '4K')[] = ['1K', '2K', '4K'];
+  readonly ALL_RESOLUTIONS: ('360p' | '1K' | '2K' | '4K')[] = [
+    '360p',
+    '1K',
+    '2K',
+    '4K',
+  ];
+
+  getResolutionLabel(resolution: '360p' | '1K' | '2K' | '4K'): string {
+    const isVideo = this.modes.some(m => m.value.includes('Video'));
+    if (isVideo) {
+      switch (resolution) {
+        case '360p':
+          return '360p';
+        case '1K':
+          return '720p';
+        case '2K':
+          return '1080p';
+        case '4K':
+          return '4K';
+        default:
+          return resolution;
+      }
+    }
+    return resolution;
+  }
 
   // --- Logic moved from VideoComponent ---
 
@@ -212,10 +251,10 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
   >(null);
   selectedMode = signal<string>('Text to Video');
   selectedPreset = signal<string>('');
-  selectedResolution = signal<'1K' | '2K' | '4K'>('1K');
+  selectedResolution = signal<'360p' | '1K' | '2K' | '4K'>('1K');
   selectedDuration = signal<number>(4);
 
-  supportedResolutions = signal<('1K' | '2K' | '4K')[]>([]);
+  supportedResolutions = signal<('360p' | '1K' | '2K' | '4K')[]>([]);
 
   // --- Computed Values ---
   isExtendVideo = computed(() => this.selectedMode() === 'Extend Video');
@@ -411,14 +450,14 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
     }
   }
 
-  selectResolution(resolution: '1K' | '2K' | '4K', model?: any) {
+  selectResolution(resolution: '360p' | '1K' | '2K' | '4K', model?: any) {
     if (!this.supportedResolutions().includes(resolution)) return;
 
     this.selectedResolution.set(resolution);
     this.resolutionChanged.emit(resolution);
     this.isSettingsDropdownOpen.set(null);
 
-    if (resolution !== '1K') {
+    if (resolution !== '1K' && resolution !== '360p') {
       const longest = this.getSelectedModelDurations(model).at(-1);
       if (longest) this.selectDuration(longest);
     }
@@ -458,16 +497,20 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
     );
   }
 
-  getSelectedModelResolutions(model?: any): ('1K' | '2K' | '4K')[] {
+  getSelectedModelResolutions(model?: any): ('360p' | '1K' | '2K' | '4K')[] {
     const activeModel = model || this.getSelectedModelObject();
-    const all = activeModel?.capabilities?.supportedResolutions ?? [];
+    const all = (activeModel?.capabilities?.supportedResolutions ?? []) as (
+      | '360p'
+      | '1K'
+      | '2K'
+      | '4K'
+    )[];
 
-    // Extending a video does drop to the lowest resolution. Editing an image
-    // does not: Nano Banana Pro and Nano Banana 2 both return full 2K and 4K
-    // with a reference image attached, verified against the live API. Pinning
-    // Ingredients to Image to the smallest option withheld resolutions the
-    // model would happily have produced.
-    if (this.isExtendVideo()) {
+    // Extending a video in Veo drops to the lowest resolution. Omni 1.1 allows all resolutions.
+    if (
+      this.isExtendVideo() &&
+      !activeModel?.value?.startsWith('gemini-omni')
+    ) {
       const smallest = all[0];
       return smallest ? [smallest] : [];
     }
@@ -514,7 +557,6 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
       supported.length === 1
     ) {
       // Only show the snackbar if the dropdown is opened or mode changed (avoid spamming on init)
-      // Actually we can just show it if they selected the model manually or it's forced to change
       if (
         model ||
         modeChanged ||

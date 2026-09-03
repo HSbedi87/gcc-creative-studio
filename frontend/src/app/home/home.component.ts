@@ -650,8 +650,10 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
     }
   }
 
-  onResolutionChanged(resolution: '1K' | '2K' | '4K') {
-    this.searchRequest.resolution = resolution;
+  onResolutionChanged(
+    resolution: '360p' | '720p' | '1080p' | '1K' | '2K' | '4K',
+  ) {
+    this.searchRequest.resolution = resolution as '1K' | '2K' | '4K';
     this.saveState();
   }
 

@@ -19,9 +19,11 @@
       class="workspace-container bg-gradient-to-b from-zinc-500/50 to-neutral-700/20 rounded-[48px] shadow-[2px_2px_12px_0px_rgba(0,0,0,0.10)] outline outline-1 outline-offset-[-1px] outline-stone-300/80 backdrop-blur-[10px] z-[1000]"
       [matMenuTriggerFor]="workspaceMenu"
       [matTooltip]="
-        'You are on a ' +
-        activeWorkspace.scope +
-        ' workspace. Click to switch workspaces!'
+        'You are on ' +
+        activeWorkspace.name +
+        ' (' + activeWorkspace.scope + ')' +
+        (activeWorkspace.gcpProjectId ? ' • Billed to GCP: ' + activeWorkspace.gcpProjectId : '') +
+        '. Click to switch!'
       "
     >
       <mat-icon>{{
@@ -48,7 +50,12 @@
         <mat-icon>{{
           workspace.scope === WorkspaceScope.PUBLIC ? 'public' : 'lock'
         }}</mat-icon>
-        <span>{{ workspace.name }}</span>
+        <div class="inline-flex flex-col text-left align-middle ml-1">
+          <span class="leading-tight">{{ workspace.name }}</span>
+          <span *ngIf="workspace.gcpProjectId" class="text-[10px] text-gray-400 font-mono leading-tight">
+            GCP: {{ workspace.gcpProjectId }}
+          </span>
+        </div>
       </button>
       <mat-divider></mat-divider>
       <button mat-menu-item (click)="openCreateWorkspaceDialog()">

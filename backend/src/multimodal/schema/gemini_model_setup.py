@@ -21,6 +21,6 @@ class GeminiModelSetup(GenAIModelSetup):
     """Initializes and configures the client for Gemini models."""
 
     @staticmethod
-    def init() -> Client:
-        """Returns the shared client instance."""
-        return GeminiModelSetup.get_client()
+    def init(project_id: str | None = None) -> Client:
+        """Returns the client instance for the specified or default project."""
+        return GeminiModelSetup.get_client(project_id=project_id)
