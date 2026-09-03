@@ -54,12 +54,14 @@
           {{ selectedGenerationModel }}
         </div>
         <!-- Ratio -->
-        <button
-          (click)="toggleSettingsMenu(); $event.stopPropagation()"
-          class="rounded-md bg-neutral-800 px-2 py-1 cursor-pointer hover:bg-neutral-700"
-        >
-          {{ aspectRatio.split(' ')[0] }}
-        </button>
+        @if (hasAspectRatioOptions()) {
+          <button
+            (click)="toggleSettingsMenu(); $event.stopPropagation()"
+            class="rounded-md bg-neutral-800 px-2 py-1 cursor-pointer hover:bg-neutral-700"
+          >
+            {{ aspectRatio.split(' ')[0] }}
+          </button>
+        }
         <!-- Outputs -->
         <button
           (click)="toggleSettingsMenu(); $event.stopPropagation()"
@@ -432,7 +434,10 @@
       #settingsMenu
       class="absolute right-0 bottom-full z-20 mb-2 w-[500px] rounded-xl bg-neutral-800 p-4 text-white shadow-lg"
     >
-      <div class="grid grid-cols-2 gap-3">
+      <div class="grid gap-3"
+        [class.grid-cols-2]="hasAspectRatioOptions()"
+        [class.grid-cols-1]="!hasAspectRatioOptions()"
+      >
         <!-- Model Dropdown -->
         <div class="relative">
           <label for="model" class="block text-xs font-medium text-neutral-400 mb-1.5">Model</label>
@@ -473,69 +478,71 @@
         </div>
 
         <!-- Aspect Ratio Dropdown -->
-        <div class="relative">
-          <label
-            for="aspect-ratio"
-            class="block text-xs font-medium text-neutral-400 mb-1.5"
-            >Aspect Ratio</label
-          >
-          <button
-            (click)="
-              $event.stopPropagation();
-              isSettingsDropdownOpen.set(
-                isSettingsDropdownOpen() === 'aspect' ? null : 'aspect'
-              )
-            "
-            class="relative w-full flex items-center justify-between rounded-lg bg-neutral-700 px-3 py-2 text-left text-sm"
-          >
-            <span class="flex items-center gap-2 min-w-0">
-              <!-- Landscape Icon -->
-              <mat-icon class="flex-shrink-0">
-                {{ aspectRatio.includes('16:9') ? 'crop_landscape' : 'crop_portrait' }}
+        @if (hasAspectRatioOptions()) {
+          <div class="relative">
+            <label
+              for="aspect-ratio"
+              class="block text-xs font-medium text-neutral-400 mb-1.5"
+              >Aspect Ratio</label
+            >
+            <button
+              (click)="
+                $event.stopPropagation();
+                isSettingsDropdownOpen.set(
+                  isSettingsDropdownOpen() === 'aspect' ? null : 'aspect'
+                )
+              "
+              class="relative w-full flex items-center justify-between rounded-lg bg-neutral-700 px-3 py-2 text-left text-sm"
+            >
+              <span class="flex items-center gap-2 min-w-0">
+                <!-- Landscape Icon -->
+                <mat-icon class="flex-shrink-0">
+                  {{ aspectRatio.includes('16:9') ? 'crop_landscape' : 'crop_portrait' }}
+                </mat-icon>
+                <span class="truncate whitespace-nowrap">{{ aspectRatio }}</span>
+              </span>
+              <mat-icon
+                class="transition-transform"
+                [class.rotate-180]="isSettingsDropdownOpen() === 'aspect'"
+              >
+                expand_more
               </mat-icon>
-              <span class="truncate whitespace-nowrap">{{ aspectRatio }}</span>
-            </span>
-            <mat-icon
-              class="transition-transform"
-              [class.rotate-180]="isSettingsDropdownOpen() === 'aspect'"
-            >
-              expand_more
-            </mat-icon>
-          </button>
-          @if (isSettingsDropdownOpen() === 'aspect') {
-            <div
-              class="absolute left-0 top-full z-30 mt-1 w-full rounded-lg bg-neutral-700 p-1 shadow-lg max-h-60 overflow-y-auto"
-            >
-              @if (aspectRatioOptions.length > 0) {
-                @for (option of aspectRatioOptions; track option.value) {
-                  <button (click)="selectNewAspectRatio(option.value)"
-                    class="block w-full px-3 py-1.5 text-left text-sm rounded hover:bg-neutral-600" [disabled]="option.disabled"
-                    [class.opacity-50]="option.disabled" [class.cursor-not-allowed]="option.disabled">
+            </button>
+            @if (isSettingsDropdownOpen() === 'aspect') {
+              <div
+                class="absolute left-0 top-full z-30 mt-1 w-full rounded-lg bg-neutral-700 p-1 shadow-lg max-h-60 overflow-y-auto"
+              >
+                @if (aspectRatioOptions.length > 0) {
+                  @for (option of aspectRatioOptions; track option.value) {
+                    <button (click)="selectNewAspectRatio(option.value)"
+                      class="block w-full px-3 py-1.5 text-left text-sm rounded hover:bg-neutral-600" [disabled]="option.disabled"
+                      [class.opacity-50]="option.disabled" [class.cursor-not-allowed]="option.disabled">
+                      <div class="flex items-center gap-2 whitespace-nowrap">
+                        <mat-icon>{{ option.icon || 'crop_landscape' }}</mat-icon>
+                        {{ option.viewValue.replace('\n', '') }}
+                      </div>
+                    </button>
+                  }
+                } @else {
+                  <button (click)="selectNewAspectRatio('16:9')"
+                    class="block w-full px-3 py-1.5 text-left text-sm rounded hover:bg-neutral-600">
                     <div class="flex items-center gap-2 whitespace-nowrap">
-                      <mat-icon>{{ option.icon || 'crop_landscape' }}</mat-icon>
-                      {{ option.viewValue.replace('\n', '') }}
+                      <mat-icon>crop_landscape</mat-icon>
+                      Horizontal (16:9)
+                    </div>
+                  </button>
+                  <button (click)="selectNewAspectRatio('9:16')"
+                    class="block w-full px-3 py-1.5 text-left text-sm rounded hover:bg-neutral-600">
+                    <div class="flex items-center gap-2 whitespace-nowrap">
+                      <mat-icon>crop_portrait</mat-icon>
+                      Vertical (9:16)
                     </div>
                   </button>
                 }
-              } @else {
-                <button (click)="selectNewAspectRatio('16:9')"
-                  class="block w-full px-3 py-1.5 text-left text-sm rounded hover:bg-neutral-600">
-                  <div class="flex items-center gap-2 whitespace-nowrap">
-                    <mat-icon>crop_landscape</mat-icon>
-                    Horizontal (16:9)
-                  </div>
-                </button>
-                <button (click)="selectNewAspectRatio('9:16')"
-                  class="block w-full px-3 py-1.5 text-left text-sm rounded hover:bg-neutral-600">
-                  <div class="flex items-center gap-2 whitespace-nowrap">
-                    <mat-icon>crop_portrait</mat-icon>
-                    Vertical (9:16)
-                  </div>
-                </button>
-              }
-            </div>
-          }
-        </div>
+              </div>
+            }
+          </div>
+        }
       </div>
 
       <div class="grid gap-3 mt-3"

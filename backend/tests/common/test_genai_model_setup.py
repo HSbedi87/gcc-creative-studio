@@ -67,9 +67,15 @@ class TestGenAIModelSetup:
         mock_omni_b = MagicMock()
         mock_client_cls.side_effect = [mock_omni_a, mock_omni_b]
 
-        client_a = GenAIModelSetup.get_omni_client(project_id="novela-project-a")
-        client_b = GenAIModelSetup.get_omni_client(project_id="novela-project-b")
-        client_a_cached = GenAIModelSetup.get_omni_client(project_id="novela-project-a")
+        client_a = GenAIModelSetup.get_omni_client(
+            project_id="novela-project-a"
+        )
+        client_b = GenAIModelSetup.get_omni_client(
+            project_id="novela-project-b"
+        )
+        client_a_cached = GenAIModelSetup.get_omni_client(
+            project_id="novela-project-a"
+        )
 
         assert client_a == mock_omni_a
         assert client_b == mock_omni_b
