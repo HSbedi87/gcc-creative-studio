@@ -28,7 +28,11 @@ import {
 } from '../../../utils/handleMessageSnackbar';
 import {JobStatus} from '../../models/media-item.model';
 import {UserModel, UserRolesEnum} from '../../models/user.model';
-import {Workspace, WorkspaceScope} from '../../models/workspace.model';
+import {
+  CreateWorkspaceRequest,
+  Workspace,
+  WorkspaceScope,
+} from '../../models/workspace.model';
 import {BrandGuidelineService} from '../../services/brand-guideline/brand-guideline.service';
 import {UserService} from '../../services/user.service';
 import {
@@ -176,7 +180,7 @@ export class WorkspaceSwitcherComponent implements OnInit {
 
   openCreateWorkspaceDialog(): void {
     const dialogRef = this.dialog.open(CreateWorkspaceModalComponent, {
-      width: '300px',
+      width: '440px',
     });
 
     dialogRef.afterClosed().subscribe(result => {
@@ -186,17 +190,29 @@ export class WorkspaceSwitcherComponent implements OnInit {
     });
   }
 
-  createWorkspace(name: string): void {
-    this.workspaceService.createWorkspace(name).subscribe({
-      next: newWorkspace => {
-        handleSuccessSnackbar(this.snackBar, `Workspace "${name}" created!`);
-        this.workspaces.push(newWorkspace);
-        this.setActiveWorkspace(newWorkspace.id);
-      },
-      error: error => {
-        handleErrorSnackbar(this.snackBar, error, 'Could not create workspace');
-      },
-    });
+  createWorkspace(request: string | CreateWorkspaceRequest): void {
+    const name = typeof request === 'string' ? request : request.name;
+    const gcpProjectId =
+      typeof request === 'object' ? request.gcpProjectId : undefined;
+    const gcsBucketName =
+      typeof request === 'object' ? request.gcsBucketName : undefined;
+
+    this.workspaceService
+      .createWorkspace(name, gcpProjectId, gcsBucketName)
+      .subscribe({
+        next: newWorkspace => {
+          handleSuccessSnackbar(this.snackBar, `Workspace "${name}" created!`);
+          this.workspaces.push(newWorkspace);
+          this.setActiveWorkspace(newWorkspace.id);
+        },
+        error: error => {
+          handleErrorSnackbar(
+            this.snackBar,
+            error,
+            'Could not create workspace',
+          );
+        },
+      });
   }
 
   get canInvite(): boolean {

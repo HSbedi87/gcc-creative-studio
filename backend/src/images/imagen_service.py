@@ -55,6 +55,7 @@ from src.images.dto.create_imagen_dto import CreateImagenDto
 from src.images.dto.upscale_imagen_dto import UpscaleImagenDto
 from src.images.dto.vto_dto import VtoDto, VtoInputLink
 from src.images.repository.media_item_repository import MediaRepository
+from src.workspaces.repository.workspace_repository import WorkspaceRepository
 from src.images.schema.imagen_result_model import (
     CustomImagenResult,
     ImageGenerationResult,
@@ -149,14 +150,39 @@ def _process_vto_in_background(
                     media_repo = MediaRepository(db)
                     iam_signer_credentials = IamSignerCredentials()
                     source_asset_repo = SourceAssetRepository(db)
-                    gcs_service = GcsService()
+                    workspace_repo = WorkspaceRepository(db)
                     cfg = config_service
+
+                    target_project_id: str | None = None
+                    target_bucket_name: str | None = None
+                    if request_dto.workspace_id:
+                        try:
+                            ws = await workspace_repo.get_by_id(
+                                request_dto.workspace_id
+                            )
+                            if ws:
+                                target_project_id = ws.gcp_project_id
+                                target_bucket_name = ws.gcs_bucket_name
+                        except Exception as e:
+                            worker_logger.warning(
+                                "Could not fetch workspace config: %s", e
+                            )
+
+                    gcs_service = GcsService(
+                        bucket_name=target_bucket_name,
+                        project_id=target_project_id,
+                    )
 
                     try:
                         start_time = time.monotonic()
-                        client = GenAIModelSetup.init()
+                        client = GenAIModelSetup.init(
+                            project_id=target_project_id
+                        )
+                        effective_bucket = (
+                            target_bucket_name or cfg.IMAGE_BUCKET
+                        )
                         gcs_output_directory = (
-                            f"gs://{cfg.IMAGE_BUCKET}/"
+                            f"gs://{effective_bucket}/"
                             f"{cfg.IMAGEN_RECONTEXT_SUBFOLDER}"
                         )
 
@@ -640,16 +666,36 @@ def _process_image_in_background(
                     gemini_service = GeminiService(
                         brand_guideline_repo=brand_guideline_repo,
                     )
-                    gcs_service = GcsService()
+                    workspace_repo = WorkspaceRepository(db)
+                    target_project_id: str | None = None
+                    target_bucket_name: str | None = None
+                    if request_dto.workspace_id:
+                        try:
+                            ws = await workspace_repo.get_by_id(
+                                request_dto.workspace_id
+                            )
+                            if ws:
+                                target_project_id = ws.gcp_project_id
+                                target_bucket_name = ws.gcs_bucket_name
+                        except Exception as e:
+                            worker_logger.warning(
+                                "Could not fetch workspace config: %s", e
+                            )
+
+                    gcs_service = GcsService(
+                        bucket_name=target_bucket_name,
+                        project_id=target_project_id,
+                    )
                     iam_signer_credentials = IamSignerCredentials()
                     cfg = config_service
 
                     # Initialize GenAI client in the worker process
-                    client = GenAIModelSetup.init()
+                    client = GenAIModelSetup.init(project_id=target_project_id)
 
                     # --- GENERATION LOGIC ---
                     start_time = time.monotonic()
-                    gcs_output_directory = f"gs://{cfg.GENMEDIA_BUCKET}"
+                    effective_bucket = target_bucket_name or cfg.GENMEDIA_BUCKET
+                    gcs_output_directory = f"gs://{effective_bucket}"
 
                     # original_prompt was unused
                     if request_dto.enhance_prompt:
@@ -1077,10 +1123,27 @@ def _process_upload_upscale_in_background(
                     media_repo = MediaRepository(db)
                     source_asset_repo = SourceAssetRepository(db)
                     brand_repo = BrandGuidelineRepository(db)
+                    workspace_repo = WorkspaceRepository(db)
+
+                    target_project_id: str | None = None
+                    target_bucket_name: str | None = None
+                    if workspace_id:
+                        try:
+                            ws = await workspace_repo.get_by_id(workspace_id)
+                            if ws:
+                                target_project_id = ws.gcp_project_id
+                                target_bucket_name = ws.gcs_bucket_name
+                        except Exception as e:
+                            worker_logger.warning(
+                                "Could not fetch workspace config: %s", e
+                            )
 
                     # Instantiate Services
                     iam_signer = IamSignerCredentials()
-                    gcs_service = GcsService()
+                    gcs_service = GcsService(
+                        bucket_name=target_bucket_name,
+                        project_id=target_project_id,
+                    )
                     gemini_service = GeminiService(
                         brand_guideline_repo=brand_repo
                     )

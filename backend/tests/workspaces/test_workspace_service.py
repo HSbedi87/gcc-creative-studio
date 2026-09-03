@@ -236,3 +236,103 @@ class TestListWorkspacesForUser:
         ids = [w.id for w in result]
         assert 1 in ids
         assert 2 in ids
+
+
+class TestUpdateWorkspaceGcpConfig:
+    """Tests for WorkspaceService.update_workspace_gcp_config."""
+
+    @pytest.mark.anyio
+    async def test_update_gcp_config_success(
+        self,
+        workspace_service,
+        mock_workspace_repo,
+        mock_user,
+    ):
+        from src.workspaces.dto.create_workspace_dto import (
+            UpdateWorkspaceGcpConfigDto,
+        )
+
+        workspace = WorkspaceModel(
+            id=1, name="My Workspace", owner_id=mock_user.id
+        )
+        mock_workspace_repo.get_by_id.return_value = workspace
+
+        updated = WorkspaceModel(
+            id=1,
+            name="My Workspace",
+            owner_id=mock_user.id,
+            gcp_project_id="new-project",
+            gcs_bucket_name="new-bucket",
+        )
+        mock_workspace_repo.update_gcp_config.return_value = updated
+
+        dto = UpdateWorkspaceGcpConfigDto(
+            gcp_project_id="new-project",
+            gcs_bucket_name="new-bucket",
+        )
+
+        result = await workspace_service.update_workspace_gcp_config(
+            workspace_id=1,
+            config_dto=dto,
+            current_user=mock_user,
+        )
+
+        assert result.gcp_project_id == "new-project"
+        assert result.gcs_bucket_name == "new-bucket"
+        mock_workspace_repo.update_gcp_config.assert_called_once_with(
+            workspace_id=1,
+            gcp_project_id="new-project",
+            gcs_bucket_name="new-bucket",
+        )
+
+    @pytest.mark.anyio
+    async def test_update_gcp_config_forbidden_for_non_owner(
+        self,
+        workspace_service,
+        mock_workspace_repo,
+        mock_user,
+    ):
+        from src.workspaces.dto.create_workspace_dto import (
+            UpdateWorkspaceGcpConfigDto,
+        )
+
+        # Owned by user 999
+        workspace = WorkspaceModel(id=1, name="Other Workspace", owner_id=999)
+        mock_workspace_repo.get_by_id.return_value = workspace
+
+        dto = UpdateWorkspaceGcpConfigDto(
+            gcp_project_id="new-project",
+        )
+
+        with pytest.raises(HTTPException) as exc:
+            await workspace_service.update_workspace_gcp_config(
+                workspace_id=1,
+                config_dto=dto,
+                current_user=mock_user,
+            )
+        assert exc.value.status_code == 403
+
+    @pytest.mark.anyio
+    async def test_update_gcp_config_not_found(
+        self,
+        workspace_service,
+        mock_workspace_repo,
+        mock_user,
+    ):
+        from src.workspaces.dto.create_workspace_dto import (
+            UpdateWorkspaceGcpConfigDto,
+        )
+
+        mock_workspace_repo.get_by_id.return_value = None
+
+        dto = UpdateWorkspaceGcpConfigDto(
+            gcp_project_id="new-project",
+        )
+
+        with pytest.raises(HTTPException) as exc:
+            await workspace_service.update_workspace_gcp_config(
+                workspace_id=999,
+                config_dto=dto,
+                current_user=mock_user,
+            )
+        assert exc.value.status_code == 404

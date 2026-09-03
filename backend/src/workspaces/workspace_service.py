@@ -18,7 +18,10 @@ from fastapi import Depends, HTTPException, status
 from src.common.email_service import EmailService
 from src.users.repository.user_repository import UserRepository
 from src.users.user_model import UserModel, UserRoleEnum
-from src.workspaces.dto.create_workspace_dto import CreateWorkspaceDto
+from src.workspaces.dto.create_workspace_dto import (
+    CreateWorkspaceDto,
+    UpdateWorkspaceGcpConfigDto,
+)
 from src.workspaces.dto.invite_user_dto import InviteUserDto
 from src.workspaces.repository.workspace_repository import WorkspaceRepository
 from src.workspaces.schema.workspace_model import (
@@ -58,11 +61,50 @@ class WorkspaceService:
         new_workspace = WorkspaceModel(
             name=create_dto.name,
             owner_id=user.id,
+            gcp_project_id=create_dto.gcp_project_id,
+            gcs_bucket_name=create_dto.gcs_bucket_name,
         )
         return await self.workspace_repo.create(
             new_workspace,
             initial_members=[owner_as_member],
         )
+
+    async def update_workspace_gcp_config(
+        self,
+        workspace_id: int,
+        config_dto: UpdateWorkspaceGcpConfigDto,
+        current_user: UserModel,
+    ) -> WorkspaceModel:
+        """Updates GCP project ID and bucket name for a workspace.
+        Only the workspace owner or system admin can perform this operation.
+        """
+        workspace = await self.workspace_repo.get_by_id(workspace_id)
+        if not workspace:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Workspace not found.",
+            )
+
+        is_system_admin = UserRoleEnum.ADMIN in current_user.roles
+        is_workspace_owner = current_user.id == workspace.owner_id
+
+        if not (is_system_admin or is_workspace_owner):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only the workspace owner or a system admin can configure GCP project settings.",
+            )
+
+        updated = await self.workspace_repo.update_gcp_config(
+            workspace_id=workspace_id,
+            gcp_project_id=config_dto.gcp_project_id,
+            gcs_bucket_name=config_dto.gcs_bucket_name,
+        )
+        if not updated:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to update workspace GCP configuration.",
+            )
+        return updated
 
     async def invite_user_to_workspace(
         self,

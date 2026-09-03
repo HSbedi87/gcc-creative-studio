@@ -28,4 +28,17 @@ export interface Workspace {
   scope: WorkspaceScope;
   members: WorkspaceMember[];
   memberIds: string[];
+  gcpProjectId?: string;
+  gcsBucketName?: string;
+}
+
+export interface CreateWorkspaceRequest {
+  name: string;
+  gcpProjectId?: string;
+  gcsBucketName?: string;
+}
+
+export interface UpdateWorkspaceGcpConfigRequest {
+  gcpProjectId?: string;
+  gcsBucketName?: string;
 }

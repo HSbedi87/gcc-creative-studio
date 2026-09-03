@@ -33,8 +33,37 @@ export class WorkspaceService {
     return this.http.get<Workspace[]>(this.apiUrl);
   }
 
-  createWorkspace(name: string): Observable<Workspace> {
-    return this.http.post<Workspace>(this.apiUrl, {name});
+  createWorkspace(
+    name: string,
+    gcpProjectId?: string,
+    gcsBucketName?: string,
+  ): Observable<Workspace> {
+    const payload: {
+      name: string;
+      gcpProjectId?: string;
+      gcsBucketName?: string;
+    } = {name};
+    if (gcpProjectId?.trim()) {
+      payload.gcpProjectId = gcpProjectId.trim();
+    }
+    if (gcsBucketName?.trim()) {
+      payload.gcsBucketName = gcsBucketName.trim();
+    }
+    return this.http.post<Workspace>(this.apiUrl, payload);
+  }
+
+  updateGcpConfig(
+    workspaceId: number,
+    gcpProjectId?: string,
+    gcsBucketName?: string,
+  ): Observable<Workspace> {
+    return this.http.patch<Workspace>(
+      `${this.apiUrl}/${workspaceId}/gcp-config`,
+      {
+        gcpProjectId: gcpProjectId?.trim() || null,
+        gcsBucketName: gcsBucketName?.trim() || null,
+      },
+    );
   }
 
   inviteUser(

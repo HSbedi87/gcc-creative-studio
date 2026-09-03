@@ -292,26 +292,37 @@
             </div>
           </ng-container>
 
-            <!-- Video Reference Slot, gated on capability rather than model name. -->
-            <div *ngIf="mode === 'Ingredients to Video' && getSelectedModelObject()?.capabilities?.supportsVideoReference"
-              class="relative h-20 w-20 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex flex-col items-center justify-center"
-              (click)="!referenceVideo && openVideoSelectorForReference.emit()"
-            >
-              <ng-container *ngIf="!referenceVideo">
+            <!-- Video Reference Slot(s), gated on capability rather than model name. -->
+            <ng-container *ngIf="mode === 'Ingredients to Video' && getSelectedModelObject()?.capabilities?.supportsVideoReference">
+              <div
+                class="relative h-20 w-20 cursor-pointer rounded-xl border-2 border-dashed border-neutral-700 bg-neutral-800 transition-colors hover:border-neutral-500 hover:bg-neutral-700 flex flex-col items-center justify-center"
+                [class.opacity-50]="effectiveReferenceVideos.length >= (getSelectedModelObject()?.capabilities?.maxReferenceVideos ?? 3)"
+                (click)="effectiveReferenceVideos.length < (getSelectedModelObject()?.capabilities?.maxReferenceVideos ?? 3) && openVideoSelectorForReference.emit()"
+              >
                 <mat-icon class="text-neutral-500">videocam</mat-icon>
-                <span class="absolute bottom-1 text-[8px] text-neutral-500">Video Ref</span>
-              </ng-container>
-              <ng-container *ngIf="referenceVideo">
-                <img *ngIf="referenceVideo.type === 'media_item' || referenceVideo.previewUrl?.includes('.png') || referenceVideo.previewUrl?.includes('.webp') || referenceVideo.previewUrl?.includes('.jpg') || referenceVideo.previewUrl?.includes('.jpeg') || referenceVideo.previewUrl?.includes('presignedThumbnailUrls')" [src]="referenceVideo.previewUrl" class="h-full w-full rounded-lg object-cover" />
-                <video *ngIf="referenceVideo.type !== 'media_item' && !referenceVideo.previewUrl?.includes('.png') && !referenceVideo.previewUrl?.includes('.webp') && !referenceVideo.previewUrl?.includes('.jpg') && !referenceVideo.previewUrl?.includes('.jpeg') && !referenceVideo.previewUrl?.includes('presignedThumbnailUrls')" [src]="referenceVideo.previewUrl" class="h-full w-full rounded-lg object-cover" muted></video>
-                <button
-                  (click)="$event.stopPropagation(); clearReferenceVideo.emit($event)"
-                  class="absolute -right-2 -top-2 rounded-full bg-neutral-900 p-0.5 text-neutral-400 hover:text-white"
-                >
-                  <mat-icon class="!h-4 !w-4 text-sm">close</mat-icon>
+                <span class="absolute bottom-1 text-[8px] text-neutral-500">
+                  {{ effectiveReferenceVideos.length }}/{{ getSelectedModelObject()?.capabilities?.maxReferenceVideos ?? 3 }} Video
+                </span>
+              </div>
+
+              <!-- List of video reference cards -->
+              <div *ngFor="let ref of effectiveReferenceVideos; let i = index" class="relative h-20 w-20 flex-shrink-0 group rounded-xl overflow-hidden border border-neutral-700 bg-neutral-800">
+                <img *ngIf="ref.type === 'media_item' || ref.previewUrl?.includes('.png') || ref.previewUrl?.includes('.webp') || ref.previewUrl?.includes('.jpg') || ref.previewUrl?.includes('.jpeg') || ref.previewUrl?.includes('presignedThumbnailUrls')" [src]="ref.previewUrl" class="h-full w-full object-cover" />
+                <video *ngIf="ref.type !== 'media_item' && !ref.previewUrl?.includes('.png') && !ref.previewUrl?.includes('.webp') && !ref.previewUrl?.includes('.jpg') && !ref.previewUrl?.includes('.jpeg') && !ref.previewUrl?.includes('presignedThumbnailUrls')" [src]="ref.previewUrl" class="h-full w-full object-cover" muted></video>
+                <button *ngIf="supportsRoleTags"
+                  (click)="$event.stopPropagation(); insertRoleTag('<VIDEO_REF_' + i + '>')"
+                  [matTooltip]="'Insert <VIDEO_REF_' + i + '> into the prompt to refer to this video'"
+                  class="absolute bottom-0 left-0 rounded-tr-md bg-neutral-900/80 px-1 text-[10px] font-mono text-neutral-300 hover:bg-blue-600 hover:text-white">
+                  {{ i }}
                 </button>
-              </ng-container>
-            </div>
+                <button
+                  (click)="$event.stopPropagation(); clearReferenceVideo.emit({index: i, event: $event})"
+                  class="absolute -right-1 -top-1 rounded-full bg-neutral-900 p-0.5 text-neutral-400 hover:text-white"
+                >
+                  <mat-icon class="!h-3.5 !w-3.5 text-xs">close</mat-icon>
+                </button>
+              </div>
+            </ng-container>
 
             <!--
               Audio Reference Slot. Gated on capability, not on a model name:
@@ -651,7 +662,7 @@
               "
               class="relative w-full flex items-center justify-between rounded-lg bg-neutral-700 px-3 py-2 text-left text-sm"
             >
-              <span>{{ selectedResolution() }}</span>
+              <span>{{ getResolutionLabel(selectedResolution()) }}</span>
               <mat-icon class="transition-transform" [class.rotate-180]="isSettingsDropdownOpen() === 'resolution'">
                 expand_more
               </mat-icon>
@@ -666,7 +677,7 @@
                     [disabled]="!supportedResolutions().includes(resolution)"
                   >
                     <div class="flex items-center gap-2">
-                      {{ resolution }}
+                      {{ getResolutionLabel(resolution) }}
                     </div>
                   </button>
                 }

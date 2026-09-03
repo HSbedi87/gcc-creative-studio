@@ -27,6 +27,13 @@ export class CreateWorkspaceModalComponent {
     Validators.required,
     Validators.minLength(3),
   ]);
+  gcpProjectId = new FormControl('', [
+    Validators.pattern(/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/),
+  ]);
+  gcsBucketName = new FormControl('', [
+    Validators.pattern(/^(gs:\/\/)?[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$/),
+  ]);
+  showAdvanced = false;
 
   constructor(public dialogRef: MatDialogRef<CreateWorkspaceModalComponent>) {}
 
@@ -45,8 +52,16 @@ export class CreateWorkspaceModalComponent {
   }
 
   create(): void {
-    if (this.workspaceName.valid) {
-      this.dialogRef.close(this.workspaceName.value);
+    if (
+      this.workspaceName.valid &&
+      this.gcpProjectId.valid &&
+      this.gcsBucketName.valid
+    ) {
+      this.dialogRef.close({
+        name: this.workspaceName.value?.trim(),
+        gcpProjectId: this.gcpProjectId.value?.trim() || undefined,
+        gcsBucketName: this.gcsBucketName.value?.trim() || undefined,
+      });
     }
   }
 }

@@ -32,7 +32,7 @@ export interface ModelCapability {
   supportedModes: GenerationMode[];
   maxReferenceImages: number; // Max images for ingredients/frames modes
   supportedAspectRatios: string[]; // e.g., ['16:9', '1:1']
-  supportedResolutions: ('1K' | '2K' | '4K')[]; // e.g., ['1K', '2K', '4K']
+  supportedResolutions: ('360p' | '720p' | '1080p' | '1K' | '2K' | '4K')[]; // e.g., ['360p', '1K', '2K', '4K']
   supportedDurations: number[];
   supportsAudio?: boolean; // For video
   supportsNegativePrompt?: boolean;
@@ -52,6 +52,7 @@ export interface ModelCapability {
    * must not advertise either.
    */
   supportsVideoReference?: boolean;
+  maxReferenceVideos?: number;
   supportsAudioReference?: boolean;
   /** Maximum clips a single request may produce. */
   maxOutputs?: number;
@@ -278,12 +279,68 @@ export const MODEL_CONFIGS: GenerationModelConfig[] = [
   },
   // --- Video Models ---
   {
+    value: 'gemini-omni-1.1-flash-preview',
+    viewValue: 'Gemini Omni 1.1 Flash (Preview)',
+    type: 'VIDEO',
+    icon: 'layers',
+    capabilities: {
+      supportedModes: [
+        'Text to Video',
+        'Ingredients to Video',
+        'Frames to Video',
+        'Edit Video',
+        'Extend Video',
+      ],
+      maxReferenceImages: 7,
+      supportedAspectRatios: ['16:9', '9:16'],
+      supportedResolutions: ['360p', '1K', '2K', '4K'],
+      supportedDurations: [3, 4, 5, 6, 7, 8, 9, 10],
+      supportsAudio: true,
+      supportsNegativePrompt: false,
+      supportsLastFrame: true,
+      supportsVideoReference: true,
+      maxReferenceVideos: 3,
+      supportsAudioReference: false,
+      maxOutputs: 4,
+      supportsRoleTags: true,
+      supportsFrameWithReferences: true,
+    },
+  },
+  {
+    value: 'gemini-omni-1.1-flash',
+    viewValue: 'Gemini Omni 1.1 Flash',
+    type: 'VIDEO',
+    icon: 'layers',
+    capabilities: {
+      supportedModes: [
+        'Text to Video',
+        'Ingredients to Video',
+        'Frames to Video',
+        'Edit Video',
+        'Extend Video',
+      ],
+      maxReferenceImages: 7,
+      supportedAspectRatios: ['16:9', '9:16'],
+      supportedResolutions: ['360p', '1K', '2K', '4K'],
+      supportedDurations: [3, 4, 5, 6, 7, 8, 9, 10],
+      supportsAudio: true,
+      supportsNegativePrompt: false,
+      supportsLastFrame: true,
+      supportsVideoReference: true,
+      maxReferenceVideos: 3,
+      supportsAudioReference: false,
+      maxOutputs: 4,
+      supportsRoleTags: true,
+      supportsFrameWithReferences: true,
+    },
+  },
+  {
     value: 'gemini-omni-flash-preview',
     viewValue: 'Gemini Omni Flash',
     type: 'VIDEO',
     icon: 'layers',
     capabilities: {
-      // No 'Extend Video': Omni does not support video extension. It does
+      // No 'Extend Video': Omni 1.0 does not support video extension. It does
       // support editing an existing clip, which is a different operation.
       // 'Frames to Video' is opening-frame only (see supportsLastFrame).
       supportedModes: [

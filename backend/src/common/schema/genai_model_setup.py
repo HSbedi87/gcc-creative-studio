@@ -30,29 +30,31 @@ except importlib.metadata.PackageNotFoundError:
 
 
 class GenAIModelSetup:
-    """A base class to handle the initialization of a shared Google GenAI client.
-    This uses a singleton pattern to ensure the client is only created once.
+    """A base class to handle the initialization and caching of Google GenAI clients.
+    Supports dynamic multi-project client routing for workspace-specific billing.
     """
 
-    _client: Client | None = None
+    _clients: dict[str, Client] = {}
+    _omni_clients: dict[str, Client] = {}
 
     @classmethod
-    def get_client(cls) -> Client:
-        """Initializes and returns a shared GenAI client instance for Vertex AI."""
-        if cls._client is None:
+    def get_client(cls, project_id: str | None = None) -> Client:
+        """Initializes and returns a GenAI client instance for Vertex AI.
+        Caches clients per project_id to reuse connection pools.
+        """
+        config = config_service
+        target_project = project_id or config.PROJECT_ID
+        location = config.LOCATION
+        if None in [target_project, location]:
+            raise ValueError("All parameters must be set.")
+
+        if target_project not in cls._clients:
             try:
-                config = config_service
-                project_id = config.PROJECT_ID
-                location = config.LOCATION
-                if None in [project_id, location]:
-                    raise ValueError("All parameters must be set.")
-
                 logger.info(
-                    f"Initializing shared GenAI client for project '{project_id}' in location '{location}'",
+                    f"Initializing shared GenAI client for project '{target_project}' in location '{location}'",
                 )
-
-                cls._client = Client(
-                    project=project_id,
+                cls._clients[target_project] = Client(
+                    project=target_project,
                     location=location,
                     vertexai=config.INIT_VERTEX,
                     http_options={
@@ -64,27 +66,26 @@ class GenAIModelSetup:
             except Exception as e:
                 logger.error("Failed to initialize GenAI client: %s", e)
                 raise
-        return cls._client
-
-    _omni_client: Client | None = None
+        return cls._clients[target_project]
 
     @classmethod
-    def get_omni_client(cls) -> Client:
-        """Initializes and returns a shared Omni GenAI client instance for Vertex AI."""
-        if cls._omni_client is None:
+    def get_omni_client(cls, project_id: str | None = None) -> Client:
+        """Initializes and returns an Omni GenAI client instance for Vertex AI.
+        Caches clients per project_id.
+        """
+        config = config_service
+        target_project = project_id or config.PROJECT_ID
+        if target_project is None:
+            raise ValueError("Project ID must be set.")
+
+        if target_project not in cls._omni_clients:
             try:
-                config = config_service
-                project_id = config.PROJECT_ID
-                if project_id is None:
-                    raise ValueError("Project ID must be set.")
-
                 logger.info(
-                    f"Initializing shared Gemini Omni GenAI client for project '{project_id}' in location 'global'",
+                    f"Initializing shared Gemini Omni GenAI client for project '{target_project}' in location 'global'",
                 )
-
-                cls._omni_client = Client(
+                cls._omni_clients[target_project] = Client(
                     vertexai=True,
-                    project=project_id,
+                    project=target_project,
                     location="global",
                     http_options={
                         "base_url": "https://aiplatform.googleapis.com",
@@ -98,9 +99,9 @@ class GenAIModelSetup:
                     "Failed to initialize Gemini Omni GenAI client: %s", e
                 )
                 raise
-        return cls._omni_client
+        return cls._omni_clients[target_project]
 
     @staticmethod
-    def init() -> Client:
-        """Returns the shared client instance."""
-        return GenAIModelSetup.get_client()
+    def init(project_id: str | None = None) -> Client:
+        """Returns the client instance for the specified or default project."""
+        return GenAIModelSetup.get_client(project_id=project_id)

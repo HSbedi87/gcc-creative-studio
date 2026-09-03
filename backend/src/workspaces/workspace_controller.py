@@ -17,7 +17,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from src.auth.auth_guard import get_current_user
 from src.users.user_model import UserModel
-from src.workspaces.dto.create_workspace_dto import CreateWorkspaceDto
+from src.workspaces.dto.create_workspace_dto import (
+    CreateWorkspaceDto,
+    UpdateWorkspaceGcpConfigDto,
+)
 from src.workspaces.dto.invite_user_dto import InviteUserDto
 from src.workspaces.schema.workspace_model import WorkspaceModel
 from src.workspaces.workspace_service import WorkspaceService
@@ -91,3 +94,25 @@ async def invite_user(
             detail="Workspace or user to invite not found.",
         )
     return updated_workspace
+
+
+@router.patch(
+    "/{workspace_id}/gcp-config",
+    response_model=WorkspaceModel,
+    summary="Update Workspace GCP Project and Bucket Configuration",
+)
+async def update_workspace_gcp_config(
+    workspace_id: int,
+    config_dto: UpdateWorkspaceGcpConfigDto,
+    current_user: UserModel = Depends(get_current_user),
+    workspace_service: WorkspaceService = Depends(),
+):
+    """Updates the GCP Project ID and custom GCS Bucket for a workspace.
+    This routes future API calls and storage billing to that project.
+    Restricted to the workspace OWNER or system ADMIN.
+    """
+    return await workspace_service.update_workspace_gcp_config(
+        workspace_id=workspace_id,
+        config_dto=config_dto,
+        current_user=current_user,
+    )

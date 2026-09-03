@@ -28,6 +28,22 @@ from src.galleries.gallery_service import GalleryService
 from src.users.user_model import UserModel, UserRoleEnum
 from src.workspaces.workspace_auth_guard import WorkspaceAuth
 
+stream_router = APIRouter(
+    prefix="/api/gallery",
+    tags=["Creative Studio Media Stream"],
+    responses={404: {"description": "Not found"}},
+)
+
+
+@stream_router.get("/media-stream")
+async def stream_media(
+    uri: str,
+    service: GalleryService = Depends(),
+):
+    """Streams a GCS media file directly to the client for playback / preview."""
+    return await service.stream_gcs_media(uri)
+
+
 router = APIRouter(
     prefix="/api/gallery",
     tags=["Creative Studio Media Gallery"],

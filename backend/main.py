@@ -38,6 +38,9 @@ from src.brand_guidelines.brand_guideline_controller import (
 )
 from src.config.config_service import config_service
 from src.galleries.gallery_controller import router as gallery_router
+from src.galleries.gallery_controller import (
+    stream_router as gallery_stream_router,
+)
 from src.generation_options.generation_options_controller import (
     router as generation_options_router,
 )
@@ -173,6 +176,7 @@ app.include_router(imagen_router)
 app.include_router(admin_router)
 app.include_router(audio_router)
 app.include_router(video_router)
+app.include_router(gallery_stream_router)
 app.include_router(gallery_router)
 app.include_router(gemini_router)
 app.include_router(user_router)

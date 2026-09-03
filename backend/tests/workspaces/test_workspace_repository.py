@@ -221,3 +221,57 @@ class TestWorkspaceRepository:
         assert response is not None
         assert len(mock_asset.members) == 1
         db_session_mock.commit.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_update_gcp_config_success(
+        self,
+        workspace_repo,
+        db_session_mock,
+    ):
+        import datetime
+        from src.workspaces.schema.workspace_model import Workspace
+
+        now = datetime.datetime.now(datetime.UTC)
+        mock_result = MagicMock()
+        mock_asset = Workspace(
+            id=30,
+            name="GCP Space",
+            owner_id=1,
+            scope="private",
+            gcp_project_id=None,
+            gcs_bucket_name=None,
+            created_at=now,
+            updated_at=now,
+        )
+        mock_result.scalar_one_or_none.return_value = mock_asset
+        db_session_mock.execute.return_value = mock_result
+
+        response = await workspace_repo.update_gcp_config(
+            workspace_id=30,
+            gcp_project_id="my-gcp-project",
+            gcs_bucket_name="my-bucket",
+        )
+
+        assert response is not None
+        assert response.id == 30
+        assert mock_asset.gcp_project_id == "my-gcp-project"
+        assert mock_asset.gcs_bucket_name == "my-bucket"
+        db_session_mock.commit.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_update_gcp_config_not_found(
+        self,
+        workspace_repo,
+        db_session_mock,
+    ):
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        db_session_mock.execute.return_value = mock_result
+
+        response = await workspace_repo.update_gcp_config(
+            workspace_id=999,
+            gcp_project_id="my-gcp-project",
+            gcs_bucket_name="my-bucket",
+        )
+
+        assert response is None

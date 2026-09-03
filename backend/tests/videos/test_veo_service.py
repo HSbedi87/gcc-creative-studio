@@ -31,6 +31,7 @@ from src.common.schema.media_item_model import (
     MediaItemModel,
     MimeTypeEnum,
 )
+from src.source_assets.schema.source_asset_model import SourceAssetModel
 from src.users.user_model import UserModel
 from src.videos.dto.concatenate_videos_dto import (
     ConcatenateVideosDto,
@@ -40,6 +41,7 @@ from src.videos.dto.create_veo_dto import CreateVeoDto
 from src.videos.veo_service import (
     VeoService,
     build_measured_metadata,
+    build_omni_response_format,
     resolve_measured_aspect_ratio,
     resolve_measured_resolution,
     resolve_omni_task,
@@ -1537,6 +1539,102 @@ class TestBackgroundWorkers:
     @patch("src.database.WorkerDatabase")
     @patch("src.videos.veo_service.GenAIModelSetup.get_omni_client")
     @patch("src.videos.veo_service.generate_thumbnail")
+    def test_omni_1_1_multiple_reference_videos_sent_as_video_parts(
+        self,
+        mock_thumb,
+        mock_omni_client_init,
+        mock_worker_db_class,
+    ):
+        """Multiple reference videos must travel as individual video parts."""
+        sample_dto = CreateVeoDto(
+            workspace_id=1,
+            prompt="Combine characters from both clips",
+            generation_model=GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
+            reference_videos=[
+                {"id": 21, "type": "source_asset"},
+                {"id": 22, "type": "source_asset"},
+            ],
+        )
+
+        mock_db_context = AsyncMock()
+        mock_db_factory = MagicMock(return_value=mock_db_context)
+        mock_worker_db_class.return_value.__aenter__.return_value = (
+            mock_db_factory
+        )
+
+        mock_vertex_client = MagicMock()
+        mock_omni_client_init.return_value = mock_vertex_client
+        mock_vertex_client.interactions.create.return_value = (
+            self._omni_interaction(uri="gs://bucket/videos/out.mp4")
+        )
+        mock_thumb.return_value = None
+
+        with (
+            patch(
+                "src.videos.veo_service.SourceAssetRepository"
+            ) as mock_asset_repo_class,
+            patch("src.videos.veo_service.GcsService"),
+            patch("os.path.exists", return_value=False),
+            patch("os.makedirs"),
+        ):
+            mock_asset_repo = AsyncMock()
+            mock_asset_repo_class.return_value = mock_asset_repo
+            mock_asset_repo.get_by_id.side_effect = [
+                SourceAssetModel(
+                    id=21,
+                    workspace_id=1,
+                    user_id=1,
+                    user_email="t@t.com",
+                    original_filename="clip1.mp4",
+                    file_hash="hash1",
+                    file_name="clip1.mp4",
+                    mime_type=MimeTypeEnum.VIDEO_MP4,
+                    gcs_uri="gs://b/clip1.mp4",
+                ),
+                SourceAssetModel(
+                    id=22,
+                    workspace_id=1,
+                    user_id=1,
+                    user_email="t@t.com",
+                    original_filename="clip2.mp4",
+                    file_hash="hash2",
+                    file_name="clip2.mp4",
+                    mime_type=MimeTypeEnum.VIDEO_MP4,
+                    gcs_uri="gs://b/clip2.mp4",
+                ),
+            ]
+
+            service = VeoService()
+            _process_video_in_background(
+                media_item_id=1234,
+                request_dto=sample_dto,
+                user_email="test@user.com",
+            )
+
+        kwargs = mock_vertex_client.interactions.create.call_args.kwargs
+        assert (
+            kwargs["generation_config"]["video_config"]["task"]
+            == "reference_to_video"
+        )
+        assert len(kwargs["input"]) == 3
+        assert kwargs["input"][0] == {
+            "type": "text",
+            "text": "Combine characters from both clips",
+        }
+        assert kwargs["input"][1] == {
+            "type": "video",
+            "mime_type": MimeTypeEnum.VIDEO_MP4,
+            "uri": "gs://b/clip1.mp4",
+        }
+        assert kwargs["input"][2] == {
+            "type": "video",
+            "mime_type": MimeTypeEnum.VIDEO_MP4,
+            "uri": "gs://b/clip2.mp4",
+        }
+
+    @patch("src.database.WorkerDatabase")
+    @patch("src.videos.veo_service.GenAIModelSetup.get_omni_client")
+    @patch("src.videos.veo_service.generate_thumbnail")
     def test_omni_edit_resumes_interaction_for_selected_clip(
         self,
         mock_thumb,
@@ -2436,6 +2534,66 @@ class TestResolveOmniTask:
             == "text_to_video"
         )
 
+    def test_extension_task(self):
+        assert (
+            resolve_omni_task(
+                is_edit=False,
+                has_references=False,
+                has_start_image=False,
+                has_source_video=True,
+            )
+            == "extend"
+        )
+
+    def test_end_image_interpolation_task(self):
+        assert (
+            resolve_omni_task(
+                is_edit=False,
+                has_references=False,
+                has_start_image=True,
+                has_end_image=True,
+            )
+            == "image_to_video"
+        )
+
+
+class TestBuildOmniResponseFormat:
+    """Tests for Omni response_format dictionary building."""
+
+    def test_build_response_format_default(self):
+        fmt = build_omni_response_format(
+            aspect_ratio="16:9",
+            duration_seconds=6,
+            gcs_output_directory="gs://bucket/out",
+        )
+        assert fmt == {
+            "type": "video",
+            "delivery": "uri",
+            "gcs_uri": "gs://bucket/out",
+            "aspect_ratio": "16:9",
+            "duration": "6s",
+        }
+
+    def test_build_response_format_with_resolutions(self):
+        for res, expected in [
+            ("360p", "360p"),
+            ("720p", "720p"),
+            ("1K", "720p"),
+            ("1080p", "1080p"),
+            ("2K", "1080p"),
+            ("4K", "4k"),
+            ("4k", "4k"),
+        ]:
+            fmt = build_omni_response_format(
+                aspect_ratio="9:16",
+                duration_seconds=5,
+                gcs_output_directory="gs://bucket/out",
+                resolution=res,
+            )
+            assert fmt["resolution"] == expected
+            assert fmt["aspect_ratio"] == "9:16"
+            assert fmt["duration"] == "5s"
+
 
 class TestOmniStartFrameWithReferences:
     """An opening frame alongside character references, on Omni.
@@ -2551,6 +2709,11 @@ class TestMeasuredMetadata:
             resolve_measured_aspect_ratio(720, 1280)
             == AspectRatioEnum.RATIO_9_16
         )
+
+    def test_360p_is_named_by_its_long_edge(self):
+        """A 640x360 clip is resolved as 360p."""
+        assert resolve_measured_resolution(640, 360) == "360p"
+        assert resolve_measured_resolution(360, 640) == "360p"
 
     def test_anything_above_1080p_is_4k(self):
         assert resolve_measured_resolution(3840, 2160) == "4K"
@@ -3133,3 +3296,255 @@ class TestVideoJobLifecycle:
             )
 
         assert update_payloads(mock_media_repo)[0] == {}
+
+
+class TestOmni11FlashWorkerCapabilities:
+    """Worker tests for Gemini Omni 1.1 Flash capabilities (resolutions, interpolation, extension)."""
+
+    @staticmethod
+    def _omni_interaction(uri: str):
+        step = SimpleNamespace(
+            type="model_output",
+            content=[
+                SimpleNamespace(
+                    type="video",
+                    uri=uri,
+                    data=None,
+                    mime_type="video/mp4",
+                )
+            ],
+            model_dump=lambda **kw: {"type": "model_output"},
+        )
+        return SimpleNamespace(
+            id="interaction-11",
+            steps=[step],
+            output_video=step.content[0],
+        )
+
+    @patch("src.database.WorkerDatabase")
+    @patch("src.videos.veo_service.GenAIModelSetup.get_omni_client")
+    @patch("src.videos.veo_service.generate_thumbnail")
+    def test_omni_1_1_sends_resolution_in_response_format(
+        self,
+        mock_thumb,
+        mock_omni_client_init,
+        mock_worker_db_class,
+    ):
+        sample_dto = CreateVeoDto(
+            workspace_id=1,
+            prompt="Generate a 4K video",
+            generation_model=GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
+            aspect_ratio="16:9",
+            duration_seconds=6,
+            resolution="4K",
+        )
+
+        mock_db_context = AsyncMock()
+        mock_db_factory = MagicMock(return_value=mock_db_context)
+        mock_worker_db_class.return_value.__aenter__.return_value = (
+            mock_db_factory
+        )
+
+        mock_vertex_client = MagicMock()
+        mock_omni_client_init.return_value = mock_vertex_client
+        mock_vertex_client.interactions.create.return_value = (
+            self._omni_interaction(uri="gs://bucket/videos/out_4k.mp4")
+        )
+        mock_thumb.return_value = "/tmp/thumbnails/thumb.png"
+
+        with (
+            patch("src.videos.veo_service.MediaRepository") as mock_repo_class,
+            patch("src.videos.veo_service.GcsService") as mock_gcs_class,
+            patch("os.path.exists", return_value=False),
+            patch("os.makedirs"),
+        ):
+            mock_media_repo = AsyncMock()
+            mock_repo_class.return_value = mock_media_repo
+
+            mock_gcs_service = MagicMock()
+            mock_gcs_class.return_value = mock_gcs_service
+            mock_gcs_service.download_from_gcs.return_value = "/tmp/local.mp4"
+
+            _process_video_in_background(
+                media_item_id=901,
+                request_dto=sample_dto,
+                user_email="test@user.com",
+            )
+
+        kwargs = mock_vertex_client.interactions.create.call_args.kwargs
+        assert kwargs["model"] == "gemini-omni-1.1-flash-preview"
+        assert (
+            kwargs["generation_config"]["video_config"]["task"]
+            == "text_to_video"
+        )
+        assert kwargs["response_format"]["resolution"] == "4k"
+        assert kwargs["response_format"]["aspect_ratio"] == "16:9"
+        assert kwargs["response_format"]["duration"] == "6s"
+
+    @patch("src.database.WorkerDatabase")
+    @patch("src.videos.veo_service.GenAIModelSetup.get_omni_client")
+    @patch("src.videos.veo_service.generate_thumbnail")
+    def test_omni_1_1_first_last_frame_interpolation(
+        self,
+        mock_thumb,
+        mock_omni_client_init,
+        mock_worker_db_class,
+    ):
+        sample_dto = CreateVeoDto(
+            workspace_id=1,
+            prompt="Interpolate smoothly between first and last frame",
+            generation_model=GenerationModelEnum.GEMINI_OMNI_1_1_FLASH,
+            start_image_asset_id={"id": 10, "type": "source_asset"},
+            end_image_asset_id={"id": 11, "type": "source_asset"},
+            aspect_ratio="16:9",
+            duration_seconds=5,
+            resolution="1080p",
+        )
+
+        mock_db_context = AsyncMock()
+        mock_db_factory = MagicMock(return_value=mock_db_context)
+        mock_worker_db_class.return_value.__aenter__.return_value = (
+            mock_db_factory
+        )
+
+        mock_vertex_client = MagicMock()
+        mock_omni_client_init.return_value = mock_vertex_client
+        mock_vertex_client.interactions.create.return_value = (
+            self._omni_interaction(uri="gs://bucket/videos/out_interp.mp4")
+        )
+        mock_thumb.return_value = "/tmp/thumbnails/thumb.png"
+
+        with (
+            patch("src.videos.veo_service.MediaRepository") as mock_repo_class,
+            patch(
+                "src.videos.veo_service.SourceAssetRepository"
+            ) as mock_source_asset_repo_class,
+            patch("src.videos.veo_service.GcsService") as mock_gcs_class,
+            patch("os.path.exists", return_value=False),
+            patch("os.makedirs"),
+        ):
+            mock_media_repo = AsyncMock()
+            mock_repo_class.return_value = mock_media_repo
+
+            mock_source_repo = AsyncMock()
+            mock_source_asset_repo_class.return_value = mock_source_repo
+
+            start_asset = MagicMock()
+            start_asset.gcs_uri = "gs://bucket/start.png"
+            start_asset.mime_type = "image/png"
+
+            end_asset = MagicMock()
+            end_asset.gcs_uri = "gs://bucket/end.png"
+            end_asset.mime_type = "image/png"
+
+            mock_source_repo.get_by_id.side_effect = [start_asset, end_asset]
+
+            mock_gcs_service = MagicMock()
+            mock_gcs_class.return_value = mock_gcs_service
+            mock_gcs_service.download_from_gcs.return_value = "/tmp/local.mp4"
+
+            _process_video_in_background(
+                media_item_id=902,
+                request_dto=sample_dto,
+                user_email="test@user.com",
+            )
+
+        kwargs = mock_vertex_client.interactions.create.call_args.kwargs
+        assert kwargs["model"] == "gemini-omni-1.1-flash"
+        assert (
+            kwargs["generation_config"]["video_config"]["task"]
+            == "image_to_video"
+        )
+        assert kwargs["response_format"]["resolution"] == "1080p"
+
+        # Check input contains prompt, start_image, end_image
+        inputs = kwargs["input"]
+        assert inputs[0]["type"] == "text"
+        assert inputs[1] == {
+            "type": "image",
+            "mime_type": "image/png",
+            "uri": "gs://bucket/start.png",
+        }
+        assert inputs[2] == {
+            "type": "image",
+            "mime_type": "image/png",
+            "uri": "gs://bucket/end.png",
+        }
+
+    @patch("src.database.WorkerDatabase")
+    @patch("src.videos.veo_service.GenAIModelSetup.get_omni_client")
+    @patch("src.videos.veo_service.generate_thumbnail")
+    def test_omni_1_1_video_extension(
+        self,
+        mock_thumb,
+        mock_omni_client_init,
+        mock_worker_db_class,
+    ):
+        sample_dto = CreateVeoDto(
+            workspace_id=1,
+            prompt="Continue the motion forwards",
+            generation_model=GenerationModelEnum.GEMINI_OMNI_1_1_FLASH_PREVIEW,
+            source_video_asset_id={"id": 20, "type": "source_asset"},
+            duration_seconds=8,
+            resolution="360p",
+        )
+
+        mock_db_context = AsyncMock()
+        mock_db_factory = MagicMock(return_value=mock_db_context)
+        mock_worker_db_class.return_value.__aenter__.return_value = (
+            mock_db_factory
+        )
+
+        mock_vertex_client = MagicMock()
+        mock_omni_client_init.return_value = mock_vertex_client
+        mock_vertex_client.interactions.create.return_value = (
+            self._omni_interaction(uri="gs://bucket/videos/out_ext.mp4")
+        )
+        mock_thumb.return_value = "/tmp/thumbnails/thumb.png"
+
+        with (
+            patch("src.videos.veo_service.MediaRepository") as mock_repo_class,
+            patch(
+                "src.videos.veo_service.SourceAssetRepository"
+            ) as mock_source_asset_repo_class,
+            patch("src.videos.veo_service.GcsService") as mock_gcs_class,
+            patch("os.path.exists", return_value=False),
+            patch("os.makedirs"),
+        ):
+            mock_media_repo = AsyncMock()
+            mock_repo_class.return_value = mock_media_repo
+
+            mock_source_repo = AsyncMock()
+            mock_source_asset_repo_class.return_value = mock_source_repo
+
+            source_video_asset = MagicMock()
+            source_video_asset.gcs_uri = "gs://bucket/source.mp4"
+            source_video_asset.mime_type = "video/mp4"
+
+            mock_source_repo.get_by_id.return_value = source_video_asset
+
+            mock_gcs_service = MagicMock()
+            mock_gcs_class.return_value = mock_gcs_service
+            mock_gcs_service.download_from_gcs.return_value = "/tmp/local.mp4"
+
+            _process_video_in_background(
+                media_item_id=903,
+                request_dto=sample_dto,
+                user_email="test@user.com",
+            )
+
+        kwargs = mock_vertex_client.interactions.create.call_args.kwargs
+        assert kwargs["model"] == "gemini-omni-1.1-flash-preview"
+        assert kwargs["generation_config"]["video_config"]["task"] == "extend"
+        assert kwargs["response_format"]["resolution"] == "360p"
+        assert kwargs["response_format"]["duration"] == "8s"
+        assert "aspect_ratio" not in kwargs["response_format"]
+
+        # Check input contains prompt and video
+        inputs = kwargs["input"]
+        assert inputs[0]["type"] == "text"
+        assert inputs[1] == {
+            "type": "video",
+            "mime_type": "video/mp4",
+            "uri": "gs://bucket/source.mp4",
+        }

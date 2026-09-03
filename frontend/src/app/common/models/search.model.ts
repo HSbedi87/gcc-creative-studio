@@ -85,6 +85,7 @@ export type VeoRequest = {
   enhancePrompt?: boolean;
   referenceImages?: ReferenceImageDto[];
   referenceVideo?: AssetReferenceDto | null;
+  referenceVideos?: AssetReferenceDto[];
   referenceAudio?: AssetReferenceDto | null;
   parentMediaItemId?: number | null;
   /** Which clip of a multi-clip parent to continue editing. */
@@ -99,7 +100,7 @@ export type VeoRequest = {
    * containing speech when reference images are also supplied.
    */
   stripSourceAudio?: boolean;
-  resolution?: '1K' | '2K' | '4K';
+  resolution?: '1K' | '2K' | '4K' | '360p' | '720p' | '1080p';
 };
 
 export type SearchResponse = {

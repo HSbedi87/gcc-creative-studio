@@ -15,16 +15,53 @@
 -->
 
 <h1 mat-dialog-title>Create New Workspace</h1>
-<div mat-dialog-content>
-  <mat-form-field appearance="fill">
+<div mat-dialog-content class="flex flex-col gap-3 min-w-[340px] pt-2">
+  <mat-form-field appearance="fill" class="w-full">
     <mat-label>Workspace Name</mat-label>
-    <input matInput [formControl]="workspaceName" cdkFocusInitial />
+    <input matInput [formControl]="workspaceName" cdkFocusInitial placeholder="e.g. Micronovela Season 1" />
     <mat-error *ngIf="workspaceName.invalid">{{ getErrorMessage() }}</mat-error>
   </mat-form-field>
+
+  <div class="border-t border-gray-700/40 pt-2">
+    <button
+      type="button"
+      mat-button
+      class="text-xs text-blue-400 hover:text-blue-300 -ml-2 mb-2 flex items-center gap-1"
+      (click)="showAdvanced = !showAdvanced"
+    >
+      <mat-icon class="text-sm !w-4 !h-4 leading-none">{{ showAdvanced ? 'expand_less' : 'expand_more' }}</mat-icon>
+      <span>{{ showAdvanced ? 'Hide' : 'Show' }} Cloud Billing & Project Routing (Optional)</span>
+    </button>
+
+    <div *ngIf="showAdvanced" class="flex flex-col gap-3 p-3 bg-gray-800/40 rounded-lg border border-gray-700/30">
+      <p class="text-xs text-gray-400 leading-relaxed">
+        Route Vertex AI generations and media storage costs directly to a dedicated GCP project for this workspace/micronovela.
+      </p>
+
+      <mat-form-field appearance="fill" class="w-full">
+        <mat-label>GCP Project ID</mat-label>
+        <input matInput [formControl]="gcpProjectId" placeholder="e.g. micronovela-alpha-prod" />
+        <mat-hint class="text-[10px]">6-30 lowercase letters, numbers, hyphens</mat-hint>
+        <mat-error *ngIf="gcpProjectId.invalid">Invalid GCP Project ID format</mat-error>
+      </mat-form-field>
+
+      <mat-form-field appearance="fill" class="w-full mt-2">
+        <mat-label>Custom GCS Bucket (Optional)</mat-label>
+        <input matInput [formControl]="gcsBucketName" placeholder="e.g. micronovela-alpha-assets" />
+        <mat-hint class="text-[10px]">Custom bucket to store generated assets</mat-hint>
+        <mat-error *ngIf="gcsBucketName.invalid">Invalid GCS bucket name format</mat-error>
+      </mat-form-field>
+    </div>
+  </div>
 </div>
-<div mat-dialog-actions>
+<div mat-dialog-actions align="end" class="mt-2">
   <button mat-button (click)="onNoClick()">Cancel</button>
-  <button mat-button (click)="create()" [disabled]="workspaceName.invalid">
+  <button
+    mat-flat-button
+    color="primary"
+    (click)="create()"
+    [disabled]="workspaceName.invalid || gcpProjectId.invalid || gcsBucketName.invalid"
+  >
     Create
   </button>
 </div>

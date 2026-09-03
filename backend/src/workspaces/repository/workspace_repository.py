@@ -155,6 +155,26 @@ class WorkspaceRepository(BaseRepository[Workspace, WorkspaceModel]):
         )
         return result.scalar_one_or_none()
 
+    async def update_gcp_config(
+        self,
+        workspace_id: int,
+        gcp_project_id: str | None,
+        gcs_bucket_name: str | None,
+    ) -> WorkspaceModel | None:
+        """Updates the GCP project ID and GCS bucket name for a workspace."""
+        result = await self.db.execute(
+            select(self.model).where(self.model.id == workspace_id),
+        )
+        workspace = result.scalar_one_or_none()
+        if not workspace:
+            return None
+
+        workspace.gcp_project_id = gcp_project_id
+        workspace.gcs_bucket_name = gcs_bucket_name
+        await self.db.commit()
+        await self.db.refresh(workspace)
+        return self._map_to_schema(workspace)
+
     def _map_to_schema(self, workspace: Workspace) -> WorkspaceModel:
         """Helper to map SQLAlchemy Workspace to Pydantic WorkspaceModel."""
         # Create the Pydantic model
@@ -163,6 +183,8 @@ class WorkspaceRepository(BaseRepository[Workspace, WorkspaceModel]):
             "name": workspace.name,
             "owner_id": workspace.owner_id,
             "scope": workspace.scope,
+            "gcp_project_id": workspace.gcp_project_id,
+            "gcs_bucket_name": workspace.gcs_bucket_name,
             "created_at": workspace.created_at,
             "updated_at": workspace.updated_at,
         }

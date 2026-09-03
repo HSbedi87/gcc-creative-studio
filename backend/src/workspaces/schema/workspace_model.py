@@ -71,6 +71,12 @@ class Workspace(Base):
     scope: Mapped[str] = mapped_column(
         String, default=WorkspaceScopeEnum.PRIVATE.value
     )
+    gcp_project_id: Mapped[str | None] = mapped_column(
+        String(100), nullable=True
+    )
+    gcs_bucket_name: Mapped[str | None] = mapped_column(
+        String(100), nullable=True
+    )
 
     # Relationships
     owner: Mapped["User"] = relationship()
@@ -138,4 +144,12 @@ class WorkspaceModel(BaseDocument):
     scope: WorkspaceScopeEnum = Field(
         default=WorkspaceScopeEnum.PRIVATE,
         description="Public workspaces are visible to all users. Private ones are visible only to members.",
+    )
+    gcp_project_id: str | None = Field(
+        default=None,
+        description="GCP Project ID to route Vertex AI / API billing to.",
+    )
+    gcs_bucket_name: str | None = Field(
+        default=None,
+        description="Custom GCS bucket to store generated assets in.",
     )
