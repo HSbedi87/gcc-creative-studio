@@ -262,12 +262,15 @@ export class FlowPromptBoxComponent implements OnInit, OnDestroy {
     () => this.selectedMode() === 'Ingredients to Image',
   );
   isTextToVideo = computed(() => this.selectedMode() === 'Text to Video');
+  isEditVideo = computed(() => this.selectedMode() === 'Edit Video');
   hasResolutionOptions = computed(() => this.supportedResolutions().length > 0);
   hasDurationOptions = computed(
     () =>
+      this.selectedMode() !== 'Edit Video' &&
       (this.getSelectedModelObject()?.capabilities?.supportedDurations ?? [])
         .length > 0,
   );
+  hasAspectRatioOptions = computed(() => this.selectedMode() !== 'Edit Video');
 
   // --- Lifecycle Hooks ---
   ngOnInit(): void {
